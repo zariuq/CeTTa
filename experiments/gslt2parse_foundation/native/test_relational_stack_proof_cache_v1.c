@@ -721,6 +721,37 @@ int main(void) {
     }
 
     {
+        /* An active apartness pair may name a variable whose binder
+         * hypothesis is not active; no expression of the proof holds it, so
+         * both machines keep their verdicts. */
+        TestTable *table = &test_store.tables[TEST_ACTIVE_DISJOINT];
+        uint32_t pair[2] = {
+            table->rows[(size_t)active_disjoint_row * 2u], 0u,
+        };
+        bool added = test_text(&test_store, "GuestX", &pair[1]) &&
+                     test_add_row(&test_store, TEST_ACTIVE_DISJOINT, pair);
+        expect(added, "cannot add an apartness pair without an active binder");
+        if (added) {
+            uncached = pprelational_stack_proof_v1_normal(
+                &store, &machine, &normal, error, sizeof(error));
+            cached = pprelational_stack_proof_v1_normal_cached(
+                &store, &machine, &cache, &normal, error, sizeof(error));
+            expect(uncached == PPRELATIONAL_STACK_PROOF_V1_OK &&
+                       cached == uncached,
+                   "normal proof refused an apartness pair without an active binder");
+            uncached = pprelational_stack_proof_v1_compressed(
+                &store, &machine, &compressed, error, sizeof(error));
+            cached = pprelational_stack_proof_v1_compressed_cached(
+                &store, &machine, &cache, &compressed,
+                error, sizeof(error));
+            expect(uncached == PPRELATIONAL_STACK_PROOF_V1_OK &&
+                       cached == uncached,
+                   "compressed proof refused an apartness pair without an active binder");
+            table->row_len--;
+        }
+    }
+
+    {
         PPRelationalStackProofV1CacheAdmission bad = admission;
         PPRelationalStackProofV1Cache rejected_cache = {0};
         bad.formula_table = TEST_LABEL_KIND;

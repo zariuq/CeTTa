@@ -1542,10 +1542,13 @@ static const PettaIntrinsicNameIds *petta_intrinsic_name_ids(void) {
  * data, as any unregistered head is.  `,` and `|` are connectives only inside
  * a `match` query or space argument, where `match` interprets them.  `&self`
  * names a space, an atom in the reference; as an operation the host would
- * read it as the space object itself.  A name left off this list stays an
+ * read it as the space object itself.  `add-reduct` is HE's: PeTTa defines it
+ * only by lib_he's equation, which makes it callable once imported, so
+ * without that library it heads data.  A name left off this list stays an
  * operation, so the host evaluates the expression it heads. */
 static bool petta_program_builtin_names_data(SymbolId head) {
     return head == g_builtin_syms.self ||
+           head == g_builtin_syms.add_reduct ||
            head == g_builtin_syms.llist_cons ||
            head == g_builtin_syms.llist_nil ||
            head == g_builtin_syms.empty ||

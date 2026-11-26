@@ -44,9 +44,9 @@ the final proc:result. Counts distinguish queued input from actual delivery.
 Focused qualification (no external service required):
   python3 tests/support/check_process_stream.py ./cetta
 
-An optional real connection check uses leanprover-community/repl:
-  python3 tests/support/check_process_stream.py ./cetta --repl REPL_EXECUTABLE --lean LEAN_EXECUTABLE
-Use the Lean executable matching the REPL build. The check sends dependent
+A real connection example, outside the tests, uses leanprover-community/repl:
+  python3 tools/process_stream_lean_repl.py ./cetta --repl REPL_EXECUTABLE --lean LEAN_EXECUTABLE
+Use the Lean executable matching the REPL build. The example sends dependent
 requests through one process, tests invalid commands and environment rollback,
 and drives two tactic steps using returned proof-state identifiers. Such IDs
 belong to that running session; they are not durable proof certificates.

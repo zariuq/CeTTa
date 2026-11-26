@@ -122,7 +122,7 @@ class CandidateReadinessTests(unittest.TestCase):
 
     def test_dry_run_has_no_evidence_or_qualification_prerequisites(self):
         environment = dict(os.environ)
-        for name in ("METTAPEDIA_ROOT", "PETTA_ORACLE_ROOT", "CETTA_CONSOLIDATION_BASELINE_RECEIPT"):
+        for name in ("PETTA_ORACLE_ROOT", "CETTA_CONSOLIDATION_BASELINE_RECEIPT"):
             environment.pop(name, None)
         process = subprocess.run(
             [sys.executable, str(ROOT / "scripts/cetta_main_readiness.py"), "--dry-run"],

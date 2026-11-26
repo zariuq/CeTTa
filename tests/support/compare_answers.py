@@ -149,12 +149,6 @@ def collapse_bag(line, petta=False):
     return collections.Counter([line])
 
 
-def query_bag(lines, collapse):
-    if collapse and len(lines) == 1:
-        return ('collapse', collapse_bag(lines[0], petta=True))
-    return ('answers', collections.Counter(lines))
-
-
 TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[()]|[^\s()]+')
 
 
@@ -409,8 +403,11 @@ def compare_petta(program, expected, actual, cetta):
     if want[:effects] != got[:effects]:
         return False, 'effects differ'
     at = effects
+    # Answers agree up to the names of their variables (P-OBS-3), as
+    # compare_framed compares them: each answer's sharing is kept, and a
+    # collapse is the bag of its elements under one renaming.
     for k, count in enumerate(counts):
-        if query_bag(want[at:at + count], kinds[k]) != query_bag(got[at:at + count], kinds[k]):
+        if not answers_equal(want[at:at + count], got[at:at + count], kinds[k]):
             return False, f'query {k + 1} answers differ as a bag'
         at += count
     return True, ''

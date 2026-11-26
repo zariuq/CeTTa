@@ -1,2 +1,6 @@
 true
 (Error (representation_error cyclic_term) $V0)
+true
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error instantiation_error (context (: system (/ =.. 2)) $V0))

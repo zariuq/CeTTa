@@ -89,6 +89,17 @@ bool petta_libpl_static_import(
     return false;
 }
 
+bool petta_libpl_static_import_source(
+    CettaLibPrologRuntime *runtime, Arena *arena, const char *file,
+    CettaCallOutcome *end) {
+    (void)runtime;
+    (void)arena;
+    (void)file;
+    if (end)
+        *end = cetta_call_failure();
+    return false;
+}
+
 void petta_libpl_warn_redefined(
     CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
     (void)runtime;

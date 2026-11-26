@@ -1,0 +1,71 @@
+true
+true
+true
+true
+true
+true
+true
+true
+(1)
+true
+false
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 1.5) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom "str") (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (foo bar)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (| &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, (| &a &b) &a)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (| &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 42) $V0)
+(Error (type_error atom "str") $V0)
+(Error (type_error atom (foo bar)) $V0)
+(Error (type_error atom (| &a &b)) $V0)
+(Error instantiation_error $V0)
+(Error instantiation_error $V0)
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (| &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (foo bar)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 1.5) $V0)
+(Error (type_error atom 42) $V0)
+(Error instantiation_error $V0)
+(Error instantiation_error $V0)
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom "str") (context (: system (/ =.. 2)) $V0))
+(Error (existence_error source_sink lib/no_such_document) (context import! lib/no_such_document))
+((item-successor 1))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom "str") $V0)
+(Error (type_error predicate_indicator (/ (foo bar) $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error atom 1.5) (context (: system (/ =.. 2)) $V0))
+(Error (type_error predicate_indicator (/ 42 $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error atom (foo bar)) $V0)
+(Error (type_error predicate_indicator (/ 42 $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error predicate_indicator (/ (foo bar) $V0)) (context (: system (/ current_predicate 1)) $V1))
+empty-conjunction
+(Error (type_error atom (foo bar)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom "str") (context (: system (/ =.. 2)) $V0))
+(((q 1)))
+()
+()
+()
+true
+true
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error predicate_indicator (/ 42 $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error predicate_indicator (/ (foo bar) $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (| &a &b)) (context (: system (/ =.. 2)) $V0))
+((x 1))
+((x 1) (y 2))
+((wf 1))

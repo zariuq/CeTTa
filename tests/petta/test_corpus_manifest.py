@@ -487,6 +487,35 @@ class AssertionTests(unittest.TestCase):
         self.assertEqual(CORPUS.judge(entry, fixed, None, 5).status, "PASS")
         self.assertEqual(CORPUS.judge(entry, failing, None, 5).status, "FAIL")
 
+    def test_examples_run_with_the_c_time_locale(self) -> None:
+        with mock.patch.dict(os.environ, {"LC_TIME": "cs_CZ.UTF-8",
+                                          "LC_NUMERIC": "cs_CZ.UTF-8"}):
+            os.environ.pop("LC_ALL", None)
+            environment = CORPUS.fixture_environment(REPO_ROOT, None)
+            self.assertEqual(environment["LC_TIME"], "C")
+            self.assertEqual(environment["LC_NUMERIC"], "cs_CZ.UTF-8")
+            self.assertNotIn("LC_ALL", environment)
+        with mock.patch.dict(os.environ, {"LC_ALL": "cs_CZ.UTF-8"}):
+            environment = CORPUS.fixture_environment(REPO_ROOT, None)
+            self.assertNotIn("LC_ALL", environment)
+            self.assertEqual(environment["LC_TIME"], "C")
+            self.assertEqual(environment["LC_CTYPE"], "cs_CZ.UTF-8")
+            self.assertEqual(environment["LC_NUMERIC"], "cs_CZ.UTF-8")
+
+    def test_a_recorded_difference_meets_its_oracle_while_it_differs(self) -> None:
+        failure = "is 5, should (fib 5). ❌ "
+        entry = {"name": "x.metta", "mode": "self-check", "timeout": 5,
+                 "failing": failure, "difference": "DIFF-22"}
+        verdict = CORPUS.judge(entry, self.run_of(failure + "\n", 1), None, 5)
+        self.assertEqual(verdict.status, "DIFF")
+        self.assertTrue(verdict.matches)
+        self.assertEqual(verdict.detail, "DIFF-22: " + failure)
+        for run in (self.run_of("is (fib 5), should (fib 5). ✅ \n"),
+                    self.run_of("is 6, should (fib 5). ❌ \n", 1),
+                    self.run_of(failure + "\n", 2)):
+            with self.subTest(stdout=run.stdout, exit=run.exit):
+                self.assertEqual(CORPUS.judge(entry, run, None, 5).status, "FAIL")
+
     def test_golden_comparison(self) -> None:
         entry = {"name": "g.metta", "mode": "golden", "timeout": 5}
         run = self.run_of("b\na\n", 0, "!(f)\n")
@@ -737,6 +766,65 @@ class CorpusTests(unittest.TestCase):
         _, output = self.compare(require_match=False)
         self.assertIn("probe.metta: expected exit 1", output)
 
+    def write_register(self, text: str) -> tuple[Path, ...]:
+        register = Path(self.temporary.name) / "swi_differences.metta"
+        register.write_text(text, encoding="utf-8")
+        return (register,)
+
+    def mark_difference(self, name: str, difference: str) -> None:
+        manifest = CORPUS.load_manifest(self.manifest)
+        for entry in manifest["entries"]:
+            if entry["name"] == name:
+                entry["difference"] = difference
+        self.manifest.write_text(CORPUS.dump_manifest(manifest))
+
+    def test_a_recorded_difference_passes_the_gate_and_is_listed(self) -> None:
+        register = self.write_register(
+            "; 1. Retired 2026-01-01: both engines agree.\n"
+            "; 2. CeTTa reads the program when it is used.\n"
+        )
+        self.sync()
+        self.mark_difference("fail.metta", "DIFF-2")
+        summary, output = quiet(
+            CORPUS.compare_manifest, self.base, self.manifest, self.cetta,
+            self.out / "compare", set(), set(), None, None, True, True,
+            self.overlay_dir, self.golden_dir, register,
+        )
+        self.assertEqual(summary["counts"], {"DIFF": 1, "PASS": 3}, output)
+        self.assertEqual(summary["failures"], [])
+        self.assertEqual(summary["recorded_differences"],
+                         ["fail.metta: DIFF-2: is 2, should 1. ❌ "])
+        self.assertIn("recorded difference from SWI-PeTTa: fail.metta: DIFF-2", output)
+        self.assertIn("1 recorded difference(s) from SWI-PeTTa", output)
+        # Only an entry in force explains a difference.
+        for difference, message in (("DIFF-1", "DIFF-1 is not an entry in force"),
+                                    ("DIFF-3", "DIFF-3 is not an entry in force")):
+            with self.subTest(difference):
+                self.mark_difference("fail.metta", difference)
+                check = CORPUS.check_corpus(
+                    self.base, self.manifest, self.overlay_dir,
+                    self.golden_dir, True, register,
+                )
+                self.assertIn(message, "\n".join(check.problems))
+        # The repository's register: entry 22 is in force, 21 is withdrawn.
+        recorded = CORPUS.register_entries(CORPUS.DEFAULT_REGISTER)
+        self.assertTrue(recorded[22])
+        self.assertFalse(recorded[21])
+
+    def test_accept_keeps_a_recorded_difference_until_it_passes(self) -> None:
+        self.sync()
+        self.mark_difference("fail.metta", "DIFF-22")
+        status, output = self.accept()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.entries()["fail.metta"]["difference"], "DIFF-22")
+        self.assertIn("recorded difference from SWI-PeTTa: fail.metta (DIFF-22)", output)
+        self.assertIn("1 recorded difference(s) from SWI-PeTTa; 0 failing self-check(s)", output)
+        self.write_example("fail.metta", "!(test (y) 1)\n;OUT is 1, should 1. ✅ \n")
+        status, output = self.accept()
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("difference", self.entries()["fail.metta"])
+        self.assertNotIn("failing", self.entries()["fail.metta"])
+
     def test_malformed_manifests_are_rejected(self) -> None:
         self.sync()
         pristine = CORPUS.load_manifest(self.manifest)
@@ -745,6 +833,8 @@ class CorpusTests(unittest.TestCase):
             "mode must be": lambda e: e[0].update(mode="oracle"),
             "timeout must be": lambda e: e[0].update(timeout=0),
             "failing is": lambda e: e[2].update(failing="x"),
+            "difference is DIFF": lambda e: e[1].update(difference="DIFF-22"),
+            "difference is DIFF-": lambda e: e[0].update(difference="22"),
             "fixture must be": lambda e: e[0].update(fixture="scripted-quit-session"),
             "overlay must be": lambda e: e[3].update(overlay="other.patch"),
             "a negative case records": lambda e: e[0].update(mode="negative"),

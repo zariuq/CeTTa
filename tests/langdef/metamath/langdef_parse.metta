@@ -64,9 +64,24 @@
      (((LangDef.Imported MetamathV1 $digest 10) True)
       ($_ False))))
 
+(= (test:metamath-thirteen-declarations-imported $result)
+   (case $result
+     (((LangDef.Imported MetamathV1 $digest 13) True)
+      ($_ False))))
+
 (= (test:metamath-twenty-declarations-imported $result)
    (case $result
      (((LangDef.Imported MetamathV1 $digest 20) True)
+      ($_ False))))
+
+(= (test:metamath-thirty-one-declarations-imported $result)
+   (case $result
+     (((LangDef.Imported MetamathV1 $digest 31) True)
+      ($_ False))))
+
+(= (test:metamath-thirty-three-declarations-imported $result)
+   (case $result
+     (((LangDef.Imported MetamathV1 $digest 33) True)
       ($_ False))))
 
 (= (test:metamath-stage-rejected $result)
@@ -313,6 +328,89 @@
        (mm-proof-step "fa")
        (mm-proof-step "fb")
        (mm-proof-step "ax"))
+     True)
+   True)
+
+; Proofs that apply axioms and theorems whose frames hold essential
+; hypotheses, in both proof forms and across them.
+!(assertEqual
+   (test:metamath-thirty-three-declarations-imported
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/positive_assertion_frames_normal.mm"))
+   True)
+!(assertEqual
+   (match &self
+     (mm-check-theorem-normal
+       (mm-label "mp2r")
+       (mm-symbol "|-")
+       (mm-symbol "ph")
+       (mm-proof-step "wps")
+       (mm-proof-step "wch")
+       (mm-proof-step "wph")
+       (mm-proof-step "mp2r.1")
+       (mm-proof-step "mp2r.2")
+       (mm-proof-step "mp2r.3")
+       (mm-proof-step "mp2"))
+     True)
+   True)
+!(assertEqual
+   (test:metamath-thirty-three-declarations-imported
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/positive_assertion_frames_compressed.mm"))
+   True)
+!(assertEqual
+   (match &self
+     (mm-check-theorem-compressed
+       (mm-label "mp2r")
+       (mm-symbol "|-")
+       (mm-symbol "ph")
+       (mm-proof-step "mp2")
+       (mm-compressed-word "BCADEFG"))
+     True)
+   True)
+; An axiom and theorems whose $d conditions matter, kept by every
+; substitution.
+!(assertEqual
+   (test:metamath-thirty-one-declarations-imported
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/positive_assertion_disjoint_conditions.mm"))
+   True)
+!(assertEqual
+   (match &self
+     (mm-check-theorem-compressed
+       (mm-label "dj-cc")
+       (mm-symbol "|-")
+       (mm-symbol "(")
+       (mm-symbol "x")
+       (mm-symbol "->")
+       (mm-symbol "y")
+       (mm-symbol ")")
+       (mm-proof-step "dj-c")
+       (mm-compressed-word "ABC"))
+     True)
+   True)
+; A floating hypothesis declared between those of a frame is active there
+; but not mandatory.
+!(assertEqual
+   (test:metamath-seven-declarations-imported
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/positive_ordered_frame_gap.mm"))
+   True)
+; An active $d names a variable that has no floating hypothesis.
+!(assertEqual
+   (test:metamath-thirteen-declarations-imported
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/positive_disjoint_variable_without_floating.mm"))
+   True)
+!(assertEqual
+   (match &self
+     (mm-check-theorem-compressed
+       (mm-label "thc")
+       (mm-symbol "|-")
+       (mm-symbol "x")
+       (mm-symbol "y")
+       (mm-proof-step "ax")
+       (mm-compressed-word "ABC"))
      True)
    True)
 !(bind! &before-proof-incomplete (count-atoms &self))
@@ -577,6 +675,69 @@
    (test:metamath-stage-rejected
      (langdef:import-file &metamath-langdef
        "tests/langdef/metamath/invalid_symbol_after_compressed_theorem_label.mm"))
+   True)
+; Applications of assertions the checker must refuse, in both proof forms:
+; a wrong essential hypothesis, a hypothesis of the wrong kind, a missing
+; $d, a substitution that violates a $d, a hypothesis out of scope.
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_wrong_essential_normal.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_wrong_essential_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_label_kind_normal.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_label_kind_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_header_kind_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_missing_disjoint_normal.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_missing_disjoint_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_disjoint_violation_normal.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_disjoint_violation_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_hypothesis_scope_normal.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_assertion_hypothesis_scope_compressed.mm"))
+   True)
+!(assertEqual
+   (test:metamath-stage-rejected
+     (langdef:import-file &metamath-langdef
+       "tests/langdef/metamath/invalid_disjoint_variable_without_floating_violation.mm"))
    True)
 !(assertEqual (count-atoms &self) &before-proof-rejected)
 

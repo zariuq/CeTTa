@@ -10,7 +10,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-from rhocalc_cost_differential import (
+from rhocalc_cost_wire import (
     A,
     PAY,
     Wire,

@@ -1,0 +1,110 @@
+# Expected verdict of each database the public witness
+# tests/langdef/metamath/langdef_parse.metta imports, when a proof backend
+# runs it: `cetta --lang metamath --langdef-proof-backend BACKEND FILE`.
+# pass: the database is accepted; fail: it is refused, as the metamath-test
+# suite writes verdicts.  test-metamath-cogslt-langdef-v1 checks every line
+# on the authority and generated-relational-audit-v1 backends.
+# test-metamath-cogslt-generated-form-mutations-v1 checks every line on
+# generated-relational-audit-v1 for each mutant the MeTTa witness leaves
+# unchanged: that backend reads the ordered frame and ordered $d of each
+# assertion, which the authority backend does not read.
+#
+# Left out: compressed negatives that the generated relational runtime
+# refuses only by exhausting its search for a derivation (it has no
+# rejection query), or not at all: out_of_range is refused after 23069463
+# rule attempts, the other four reach the 100000000-attempt limit and end
+# StageIncomplete.  The MeTTa witness decides all five on the authority
+# backend.
+#   tests/langdef/metamath/invalid_theorem_compressed_out_of_range.mm
+#   tests/langdef/metamath/invalid_assertion_wrong_essential_compressed.mm
+#   tests/langdef/metamath/invalid_assertion_label_kind_compressed.mm
+#   tests/langdef/metamath/invalid_assertion_missing_disjoint_compressed.mm
+#   tests/langdef/metamath/invalid_assertion_disjoint_violation_compressed.mm
+fail	tests/langdef/metamath/invalid_unclosed_comment.mm
+pass	tests/langdef/metamath/positive_constants.mm
+pass	tests/langdef/metamath/positive_constants_variables.mm
+pass	tests/langdef/metamath/positive_disjoint_variables.mm
+pass	tests/langdef/metamath/positive_floating.mm
+pass	tests/langdef/metamath/positive_scoped_floating_reactivation.mm
+pass	tests/langdef/metamath/positive_essential.mm
+pass	tests/langdef/metamath/positive_axiom.mm
+pass	tests/support/metamath_mini_thm_v0.mm
+pass	tests/support/metamath_demo0_theorem_v0.mm
+pass	tests/support/metamath_mini_thm_compressed_v0.mm
+pass	tests/langdef/metamath/positive_theorem_normal_reuse.mm
+pass	tests/langdef/metamath/positive_theorem_reused_essential.mm
+pass	tests/langdef/metamath/positive_theorem_compressed_reuse.mm
+pass	tests/langdef/metamath/positive_theorem_disjoint_substitution.mm
+pass	tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm
+pass	tests/langdef/metamath/positive_assertion_frames_normal.mm
+pass	tests/langdef/metamath/positive_assertion_frames_compressed.mm
+pass	tests/langdef/metamath/positive_assertion_disjoint_conditions.mm
+pass	tests/langdef/metamath/positive_ordered_frame_gap.mm
+pass	tests/langdef/metamath/positive_disjoint_variable_without_floating.mm
+pass	tests/langdef/metamath/positive_theorem_normal_unknown.mm
+pass	tests/langdef/metamath/positive_theorem_compressed_unknown.mm
+pass	tests/langdef/metamath/positive_scoped_floating_retype.mm
+fail	tests/langdef/metamath/invalid_inner_constant.mm
+fail	tests/langdef/metamath/invalid_symbol_kind_conflict.mm
+fail	tests/langdef/metamath/invalid_duplicate_active_variable.mm
+fail	tests/langdef/metamath/invalid_inactive_disjoint_variable.mm
+fail	tests/langdef/metamath/invalid_duplicate_disjoint_variable.mm
+fail	tests/langdef/metamath/invalid_floating_typecode.mm
+fail	tests/langdef/metamath/invalid_floating_inactive_variable.mm
+fail	tests/langdef/metamath/invalid_duplicate_active_floating.mm
+fail	tests/langdef/metamath/invalid_floating_label_symbol.mm
+fail	tests/langdef/metamath/invalid_duplicate_floating_label.mm
+fail	tests/langdef/metamath/invalid_symbol_after_label.mm
+fail	tests/langdef/metamath/invalid_essential_typecode.mm
+fail	tests/langdef/metamath/invalid_essential_undeclared_symbol.mm
+fail	tests/langdef/metamath/invalid_essential_variable_without_float.mm
+fail	tests/langdef/metamath/invalid_essential_inactive_float.mm
+fail	tests/langdef/metamath/invalid_cross_kind_duplicate_label.mm
+fail	tests/langdef/metamath/invalid_axiom_typecode.mm
+fail	tests/langdef/metamath/invalid_axiom_undeclared_symbol.mm
+fail	tests/langdef/metamath/invalid_axiom_variable_without_float.mm
+fail	tests/langdef/metamath/invalid_axiom_inactive_float.mm
+fail	tests/langdef/metamath/invalid_duplicate_axiom_label.mm
+fail	tests/langdef/metamath/invalid_axiom_label_symbol.mm
+fail	tests/langdef/metamath/invalid_variable_after_label.mm
+fail	tests/langdef/metamath/invalid_essential_label_symbol.mm
+fail	tests/langdef/metamath/invalid_duplicate_essential_label.mm
+fail	tests/langdef/metamath/invalid_symbol_after_essential_label.mm
+fail	tests/langdef/metamath/invalid_theorem_missing_disjoint.mm
+fail	tests/langdef/metamath/invalid_theorem_wrong_claim.mm
+fail	tests/langdef/metamath/invalid_theorem_unknown_label.mm
+fail	tests/langdef/metamath/invalid_theorem_self_reference.mm
+fail	tests/langdef/metamath/invalid_theorem_inactive_hypothesis.mm
+fail	tests/langdef/metamath/invalid_theorem_reused_missing_disjoint.mm
+fail	tests/langdef/metamath/invalid_theorem_reused_missing_essential.mm
+fail	tests/support/metamath_demo0_theorem_noblock_v0.mm
+fail	tests/langdef/metamath/invalid_theorem_normal_label_symbol.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_label_symbol.mm
+fail	tests/langdef/metamath/invalid_theorem_normal_duplicate_label.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_duplicate_label.mm
+fail	tests/langdef/metamath/invalid_theorem_normal_variable_typecode.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_variable_typecode.mm
+fail	tests/langdef/metamath/invalid_theorem_normal_undeclared_symbol.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_undeclared_symbol.mm
+fail	tests/langdef/metamath/invalid_theorem_normal_reused_missing_essential_variable.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_reused_missing_essential_variable.mm
+fail	tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm
+fail	tests/langdef/metamath/invalid_symbol_after_normal_theorem_label.mm
+fail	tests/langdef/metamath/invalid_symbol_after_compressed_theorem_label.mm
+fail	tests/langdef/metamath/invalid_assertion_wrong_essential_normal.mm
+fail	tests/langdef/metamath/invalid_assertion_label_kind_normal.mm
+fail	tests/langdef/metamath/invalid_assertion_header_kind_compressed.mm
+fail	tests/langdef/metamath/invalid_assertion_missing_disjoint_normal.mm
+fail	tests/langdef/metamath/invalid_assertion_disjoint_violation_normal.mm
+fail	tests/langdef/metamath/invalid_assertion_hypothesis_scope_normal.mm
+fail	tests/langdef/metamath/invalid_assertion_hypothesis_scope_compressed.mm
+fail	tests/langdef/metamath/invalid_disjoint_variable_without_floating_violation.mm
+pass	tests/langdef/metamath/positive_scoped_reactivation.mm
+pass	tests/langdef/metamath/include/basic_root.mm
+pass	tests/langdef/metamath/include/nested_root.mm
+pass	tests/langdef/metamath/include/duplicate_root.mm
+pass	tests/langdef/metamath/include/self_root.mm
+fail	tests/langdef/metamath/include/invalid_child_root.mm
+fail	tests/langdef/metamath/include/missing_child_root.mm
+fail	tests/langdef/metamath/include/incomplete_child_root.mm
+fail	tests/langdef/metamath/include/inner_scope_root.mm

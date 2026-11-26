@@ -403,6 +403,9 @@ typedef enum {
 } OemAlgebraicFold;
 
 enum { OEM_PURE_RELATION_INLINE_ARGS = 16u };
+/* Forms nested in a written head's result position that the tier reads
+ * through before handing the call to the host (as the host's own bound). */
+enum { OEM_EVIDENCE_HEAD_DEPTH = 1024u };
 
 typedef struct OemScalarProgram OemScalarProgram;
 static void oem_scalar_free(OemScalarProgram *);
@@ -4029,14 +4032,22 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     }
     /* A written head of a declared function may be a partial application
      * whose call continues under the function's declarations, a decision
-     * the host makes when the call runs (petta_machine_try_staged_typed_call). */
+     * the host makes when the call runs (petta_machine_try_staged_typed_call).
+     * So may a head written as a form whose result position holds one
+     * (petta_semantics_head_result_child). */
     if (!undefined && oem_apply_call(expr, plan) &&
         expr->expr.elems[0]->kind == ATOM_EXPR &&
         compile->host && compile->host->declared_builtin_protocol) {
         Atom *innermost = expr->expr.elems[0];
-        while (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
-               innermost->expr.elems[0]->kind == ATOM_EXPR)
-            innermost = innermost->expr.elems[0];
+        for (uint32_t step = 0u; step < OEM_EVIDENCE_HEAD_DEPTH; step++) {
+            while (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
+                   innermost->expr.elems[0]->kind == ATOM_EXPR)
+                innermost = innermost->expr.elems[0];
+            CettaExprIndex result = petta_semantics_head_result_child(innermost);
+            if (result == 0u)
+                break;
+            innermost = innermost->expr.elems[result];
+        }
         SpaceTheoryView view = space_theory_view_borrow(compile->program->space);
         if (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
             innermost->expr.elems[0]->kind == ATOM_SYMBOL &&

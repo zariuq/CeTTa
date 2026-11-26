@@ -1,5 +1,5 @@
 ; Reference contract for the base PeTTa type policy.
-; Expected output is SWI-PeTTa stable-fixed's (last aligned at 9e8fbb6), not
+; Expected output is SWI-PeTTa stable-fixed's (last aligned at e4e345f), not
 ; CeTTa's.
 
 (: pcg-pair (-> Number Atom Expression))

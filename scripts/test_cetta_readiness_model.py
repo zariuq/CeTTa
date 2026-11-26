@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from bench_d4_progress import census_classification
 from cetta_main_readiness import (
-    execution_theory_identity, readiness_commands, petta_oracle_identity, source_identity,
+    readiness_commands, petta_oracle_identity, source_identity,
     frozen_performance_baseline, prepare_performance_baseline,
 )
 from check_precise_vocabulary import WORD, pinned_reference_field
@@ -53,74 +53,6 @@ from cetta_readiness_model import (
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "benchmarks/main_readiness_properties.json"
 PASS_COUNT = 0
-
-
-def check_execution_theory_identity() -> None:
-    """Receipt validation controls; these fixture bytes are not proof evidence."""
-    module = "Mettapedia.Machines.ExecutionAudit"
-    with tempfile.TemporaryDirectory(prefix="readiness-theory-", dir=ROOT / "runtime") as tmp:
-        directory = Path(tmp)
-        source = directory / "Mettapedia/Machines/ExecutionAudit.lean"
-        obj = directory / ".lake/build/lib/lean/Mettapedia/Machines/ExecutionAudit.olean"
-        source.parent.mkdir(parents=True)
-        obj.parent.mkdir(parents=True)
-        source.write_bytes(b"source identity fixture\n")
-        obj.write_bytes(b"object identity fixture\n")
-        config = {"lean-toolchain": "fixture", "lakefile.lean": "fixture",
-                  "lake-manifest.json": "fixture"}
-        for name, contents in config.items():
-            (directory / name).write_text(contents)
-        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        receipt = directory / "receipt.json"
-        audit_log = receipt.with_suffix(".audit.log")
-        audit_log.write_bytes(b"audit observation identity fixture\n")
-        data = {
-            "schema": "cetta.execution-theory.v1", "status": "passed",
-            "audit": {"schema": "execution-foundations-v1", "ownedModules": 1,
-                      "localSourceModules": 1, "checkedBodies": 1, "theorems": 1,
-                      "allowedAxioms": ["propext", "Classical.choice", "Quot.sound"],
-                      "usedAxioms": ["propext"]},
-            "owned_modules": [module],
-            "modules": {module: {"source_sha256": digest(source), "object_sha256": digest(obj)}},
-            "configuration": {name: digest(directory / name) for name in config},
-            "audit_log_sha256": digest(audit_log),
-        }
-        receipt.write_text(json.dumps(data))
-        with patch.dict(os.environ, {"EXECUTION_MODEL_RECEIPT": str(receipt)}):
-            require(execution_theory_identity(ROOT, directory)["modules"] == data["modules"],
-                    "exact execution source/object receipt was rejected")
-            report_pass("execution theory receipt validates selected source and objects")
-            for path in [source, obj, directory / "lake-manifest.json", audit_log]:
-                original = path.read_bytes()
-                path.write_bytes(original + b"changed\n")
-                try:
-                    execution_theory_identity(ROOT, directory)
-                except RuntimeError:
-                    pass
-                else:
-                    raise AssertionError(f"stale execution theory receipt accepted: {path.name}")
-                path.write_bytes(original)
-                report_pass(f"execution theory receipt rejects altered {path.name}")
-            for name in ["nonstandard axiom", "missing owner", "failed audit", "escaping module"]:
-                mutant = json.loads(json.dumps(data))
-                if name == "nonstandard axiom":
-                    mutant["audit"]["usedAxioms"] = ["hiddenAssumption"]
-                elif name == "missing owner":
-                    mutant["owned_modules"] = []
-                    mutant["audit"]["ownedModules"] = 0
-                elif name == "failed audit":
-                    mutant["status"] = "failed"
-                else:
-                    mutant["modules"] = {"Mettapedia../outside": data["modules"][module]}
-                    mutant["owned_modules"] = ["Mettapedia../outside"]
-                receipt.write_text(json.dumps(mutant))
-                try:
-                    execution_theory_identity(ROOT, directory)
-                except RuntimeError:
-                    pass
-                else:
-                    raise AssertionError(f"invalid execution theory receipt accepted: {name}")
-                report_pass(f"execution theory receipt rejects {name}")
 
 
 def check_frozen_baseline() -> None:
@@ -1140,8 +1072,6 @@ def main() -> int:
             "readiness omits a settled PeTTa contract gate")
     for tier in ("routine", "exhaustive"):
         targets = [command[-1] for command in readiness_commands(tier)]
-        require("test-execution-theory" in targets,
-                "readiness must audit the maintained execution models")
         require(all(targets.index(target) < targets.index("test-correctness-all")
                     for target in settled_petta_targets),
                 "broad readiness starts before validating its PeTTa contract")
@@ -1154,7 +1084,13 @@ def main() -> int:
                 targets.index("test-correctness-all"),
                 "execution contracts must precede the broad readiness matrix")
     report_pass("both tiers record execution contracts inside frozen evidence")
-    check_execution_theory_identity()
+    for tier in ("routine", "exhaustive"):
+        targets = [command[-1] for command in readiness_commands(tier)]
+        require("test-rhocalc-cost-prefixes" in targets,
+                "readiness must check the recorded cost-rho causal prefixes")
+        require(not any(target.startswith("lean-") for target in targets),
+                "readiness runs a Lean alignment tool")
+    report_pass("both tiers check cost-rho prefixes and run no Lean alignment tool")
     require("main-readiness-consolidation" in routine_targets & exhaustive_targets,
             "a readiness tier omits the original consolidation baseline")
     require("bench-evaluator-tax" in routine_targets & exhaustive_targets,

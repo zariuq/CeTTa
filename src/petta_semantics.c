@@ -1119,14 +1119,78 @@ Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern) {
         : NULL;
 }
 
-Atom *petta_semantics_space_operand_error(Arena *arena, Atom *location) {
+Atom *petta_semantics_unbound_atom_error(Arena *arena) {
+    return arena
+        ? petta_error_term(arena, atom_symbol(arena, "instantiation_error"),
+                           petta_error_unbound_context(arena))
+        : NULL;
+}
+
+/* The reference keeps the atoms of a space under predicates named after the
+ * space (src/spaces.pl): a nonempty expression under the predicate =../2
+ * names from the space's name and the expression's head symbol, any other
+ * atom under space_primitive/2 with the space's name, which must_be/2 checks
+ * to be a symbol.  An operand that is no symbol fails the first of these
+ * checks the operation reaches, with that predicate's term: (type_error atom
+ * X), or instantiation_error when the operand is unbound, in =../2's
+ * context, or in none for must_be/2. */
+Atom *petta_semantics_space_name_error(Arena *arena, Atom *location,
+                                       bool nonempty_expression) {
     if (!arena || !location)
         return NULL;
     Atom *formal = location->kind == ATOM_VAR
         ? atom_symbol(arena, "instantiation_error")
         : atom_expr3(arena, atom_symbol(arena, "type_error"),
                      atom_symbol(arena, "atom"), location);
-    return petta_error_term(arena, formal, petta_error_unbound_context(arena));
+    Atom *context = nonempty_expression
+        ? petta_error_predicate_context(arena, "system", "=..", 2)
+        : petta_error_unbound_context(arena);
+    return petta_error_term(arena, formal, context);
+}
+
+Atom *petta_semantics_space_atom_error(Arena *arena, Atom *location,
+                                       const Atom *atom) {
+    return petta_semantics_space_name_error(
+        arena, location,
+        atom && atom->kind == ATOM_EXPR && atom->expr.len > 0u);
+}
+
+Atom *petta_semantics_space_write_error(Arena *arena, Atom *location,
+                                        Atom *atom, bool removal) {
+    if (!arena || !location || !atom)
+        return NULL;
+    if (atom->kind == ATOM_VAR)
+        return petta_semantics_unbound_atom_error(arena);
+    Atom *refused = removal
+        ? petta_semantics_remove_pattern_error(arena, atom) : NULL;
+    return refused ? refused
+                   : petta_semantics_space_atom_error(arena, location, atom);
+}
+
+Atom *petta_semantics_space_atoms_error(Arena *arena, Atom *location) {
+    if (!arena || !location)
+        return NULL;
+    if (location->kind == ATOM_VAR)
+        return petta_semantics_unbound_atom_error(arena);
+    Atom *indicator = atom_expr3(arena, atom_symbol(arena, "/"), location,
+                                 petta_error_unbound_context(arena));
+    Atom *formal = indicator
+        ? atom_expr3(arena, atom_symbol(arena, "type_error"),
+                     atom_symbol(arena, "predicate_indicator"), indicator)
+        : NULL;
+    return petta_error_term(
+        arena, formal,
+        petta_error_predicate_context(arena, "system", "current_predicate", 1));
+}
+
+Atom *petta_semantics_space_read_error(Arena *arena, Atom *location,
+                                       Atom *pattern) {
+    if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len >= 2u &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma))
+        pattern = pattern->expr.elems[1];
+    if (!pattern || pattern->kind == ATOM_VAR)
+        return petta_semantics_space_atoms_error(arena, location);
+    return petta_semantics_space_atom_error(arena, location, pattern);
 }
 
 /* The elements of the list `value` spells, in order, whatever its form: a
@@ -1336,6 +1400,182 @@ Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file) {
     Atom *where = context && import
         ? atom_expr3(arena, context, import, file) : NULL;
     return petta_error_term(arena, formal, where);
+}
+
+static bool petta_document_blank(unsigned char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' ||
+           c == '\r';
+}
+
+/* syntax_error(Message) in the context the reference's loader gives an error
+ * that has none of its own: context(Path, 'while loading MeTTa file'). */
+static Atom *petta_document_error(Arena *arena, const char *path,
+                                  const char *message, size_t message_len) {
+    char *text = arena_alloc(arena, message_len + 1u);
+    if (!text)
+        return NULL;
+    memcpy(text, message, message_len);
+    text[message_len] = '\0';
+    Atom *formal = atom_expr2(arena, atom_symbol(arena, "syntax_error"),
+                              atom_symbol(arena, text));
+    Atom *where = atom_expr3(arena, atom_symbol(arena, "context"),
+                             atom_symbol(arena, path),
+                             atom_symbol(arena, "while loading MeTTa file"));
+    return petta_error_term(arena, formal, where);
+}
+
+/* The message for the form that starts at `line`, followed by the rest of
+ * its line from `rest` (the reference's string_without("\n", Rest)): `what`
+ * is the message up to the line number, "expected '(' or '!(', line" or
+ * "missing ')', starting at line". */
+static Atom *petta_document_scan_error(Arena *arena, const char *path,
+                                       const char *what, long line,
+                                       const char *rest, size_t available) {
+    const char *end = memchr(rest, '\n', available);
+    size_t rest_len = end ? (size_t)(end - rest) : available;
+    int head = snprintf(NULL, 0, "%s %ld:\n", what, line);
+    if (head < 0 || rest_len > SIZE_MAX - (size_t)head - 1u)
+        return NULL;
+    size_t length = (size_t)head + rest_len;
+    char *message = malloc(length + 1u);
+    if (!message)
+        return NULL;
+    snprintf(message, (size_t)head + 1u, "%s %ld:\n", what, line);
+    memcpy(message + head, rest, rest_len);
+    Atom *error = petta_document_error(arena, path, message, length);
+    free(message);
+    return error;
+}
+
+Atom *petta_semantics_document_syntax_error(
+    Arena *arena, const char *bytes, size_t length, const char *path,
+    PettaDocumentFormReads reads, void *context) {
+    if (!arena || (!bytes && length) || !path)
+        return NULL;
+    /* strip/3: a comment outside a string goes with its line end. */
+    char *text = malloc(length + 1u);
+    if (!text)
+        return NULL;
+    size_t n = 0u;
+    bool in_string = false;
+    for (size_t i = 0u; i < length; i++) {
+        unsigned char c = (unsigned char)bytes[i];
+        if (in_string && c == '\\' && i + 1u < length) {
+            text[n++] = (char)c;
+            text[n++] = bytes[++i];
+            continue;
+        }
+        if (c == '"') {
+            in_string = !in_string;
+        } else if (c == ';' && !in_string) {
+            const char *line_end =
+                memchr(bytes + i + 1u, '\n', length - i - 1u);
+            if (!line_end)
+                break;
+            i = (size_t)(line_end - bytes);
+            continue;
+        }
+        text[n++] = (char)c;
+    }
+    text[n] = '\0';
+    /* top_forms//2: each form starts with "(" or "!(" on the line counted
+     * through the blanks before it, and ends at the ")" that balances it,
+     * outside strings, whose escapes are skipped. */
+    size_t *forms = NULL;
+    size_t form_count = 0u, form_capacity = 0u;
+    Atom *error = NULL;
+    bool failed = false;
+    size_t pos = 0u;
+    long line = 1;
+    for (;;) {
+        size_t start = pos;
+        while (pos < n && petta_document_blank((unsigned char)text[pos]))
+            pos++;
+        if (pos == n)
+            break;
+        for (size_t k = start; k < pos; k++)
+            if (text[k] == '\n')
+                line++;
+        if (text[pos] == '!')
+            pos++;
+        if (pos >= n || text[pos] != '(') {
+            error = petta_document_scan_error(
+                arena, path, "expected '(' or '!(', line", line,
+                text + pos, n - pos);
+            failed = true;
+            break;
+        }
+        size_t open = pos++;
+        size_t at = pos;
+        long depth = 1, form_line = line;
+        bool string = false, closed = false;
+        while (at < n) {
+            unsigned char c = (unsigned char)text[at];
+            if (string && c == '\\') {
+                if (at + 1u >= n)
+                    break;
+                if (text[at + 1u] == '\n')
+                    form_line++;
+                at += 2u;
+                continue;
+            }
+            if (!string && c == '(')
+                depth++;
+            else if (!string && c == ')')
+                depth--;
+            if (c == '"')
+                string = !string;
+            if (c == '\n')
+                form_line++;
+            at++;
+            if (depth == 0 && !string) {
+                closed = true;
+                break;
+            }
+        }
+        if (!closed) {
+            error = petta_document_scan_error(
+                arena, path, "missing ')', starting at line", line,
+                text + pos, n - pos);
+            failed = true;
+            break;
+        }
+        if (form_count == form_capacity) {
+            size_t grown = form_capacity ? form_capacity * 2u : 16u;
+            size_t *more = realloc(forms, grown * 2u * sizeof(size_t));
+            if (!more) {
+                failed = true;
+                break;
+            }
+            forms = more;
+            form_capacity = grown;
+        }
+        forms[2u * form_count] = open;
+        forms[2u * form_count + 1u] = at - open;
+        form_count++;
+        line = form_line;
+        pos = at;
+    }
+    /* parse_form/2: every form is read, in order, as sread reads it. */
+    for (size_t i = 0u; !failed && reads && i < form_count; i++) {
+        const char *form = text + forms[2u * i];
+        size_t form_length = forms[2u * i + 1u];
+        if (reads(context, form, form_length))
+            continue;
+        static const char prefix[] = "Parse error in form: ";
+        char *message = malloc(sizeof(prefix) + form_length);
+        if (message) {
+            memcpy(message, prefix, sizeof(prefix) - 1u);
+            memcpy(message + sizeof(prefix) - 1u, form, form_length);
+            error = petta_document_error(
+                arena, path, message, sizeof(prefix) - 1u + form_length);
+            free(message);
+        }
+        failed = true;
+    }
+    free(forms);
+    free(text);
+    return error;
 }
 
 bool petta_semantics_error_message(Arena *arena, Atom *error, char *out,
@@ -5566,6 +5806,25 @@ CettaExprIndex petta_semantics_output_child(const Atom *body) {
             petta_semantics_elaborate_control(head, form, len - 1u), len - 1u);
     if (form == PETTA_FORM_TRACE && len == 3u)
         return 2u;
+    return 0u;
+}
+
+CettaExprIndex petta_semantics_head_result_child(const Atom *head) {
+    CettaExprIndex output = petta_semantics_output_child(head);
+    if (output != 0u)
+        return output;
+    if (!head || head->kind != ATOM_EXPR || head->expr.len < 2u ||
+        head->expr.elems[0]->kind != ATOM_SYMBOL)
+        return 0u;
+    SymbolId name = head->expr.elems[0]->sym_id;
+    CettaExprLen len = head->expr.len;
+    if ((name == g_builtin_syms.once ||
+         name == g_builtin_syms.petta_transaction) && len == 2u)
+        return 1u;
+    if (name == g_builtin_syms.petta_with_mutex && len == 3u)
+        return 2u;
+    if (name == g_builtin_syms.match && len == 4u)
+        return 3u;
     return 0u;
 }
 

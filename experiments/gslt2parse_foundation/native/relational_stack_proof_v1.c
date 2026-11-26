@@ -1801,11 +1801,17 @@ static PPRelationalStackProofV1Result ppproof_v1_finite_support_prepare(
             return PPRELATIONAL_STACK_PROOF_V1_INVALID;
         if (row[0] == row[1])
             return PPRELATIONAL_STACK_PROOF_V1_REJECTED;
+        /* An active apartness pair may name a variable that has no active
+         * binder hypothesis.  Every expression of this proof is built from
+         * active hypotheses, whose variables all have active binders, so
+         * such a variable occurs in no expression and the pair constrains
+         * no substitution: it adds nothing to the support. */
         if (!ppproof_v1_finite_support_slot(
                 support, row[0], &left_slot) ||
             !ppproof_v1_finite_support_slot(
-                support, row[1], &right_slot) ||
-            !cetta_gslt_dense_bitset_set_v1(
+                support, row[1], &right_slot))
+            continue;
+        if (!cetta_gslt_dense_bitset_set_v1(
                 &support->apartness[left_slot], right_slot, &changed) ||
             !cetta_gslt_dense_bitset_set_v1(
                 &support->apartness[right_slot], left_slot, &changed))

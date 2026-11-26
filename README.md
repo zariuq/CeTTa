@@ -343,14 +343,14 @@ For changes to conditional answers and delayed goals, run
 These checks cover whole-packet validation, wakeup multiplicity and shared
 binding-history rollback.
 
-The broad and exhaustive tiers need `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
-consolidation baseline's `CETTA_CONSOLIDATION_BASELINE_RECEIPT` and
-`CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). First run
-`make test-execution-theory` to build the maintained execution-model audit and
-record its selected source/object closure. Readiness checks that receipt before
-freezing, records the theory and live execution gates inside the campaign, and
-rejects reuse after a relevant model or object changes. The exhaustive
-tier also needs `PETTA_ORACLE_ROOT`, a pinned checkout or source snapshot;
+The broad and exhaustive tiers need the frozen consolidation baseline's
+`CETTA_CONSOLIDATION_BASELINE_RECEIPT` and `CETTA_CONSOLIDATION_BASELINE_SHA256`
+(the receipt's digest). Readiness records the live execution gates inside the
+campaign and rejects reuse after a relevant input changes; no tier needs a
+Mettapedia checkout or a Lean toolchain. The Lean alignment tools
+(`make lean-alignment` and the other `lean-alignment-*` targets in
+`mk/lean_alignment.mk`) compare CeTTa with Mettapedia separately; they are not
+tests and no tier runs them. The exhaustive tier also needs `PETTA_ORACLE_ROOT`, a pinned checkout or source snapshot;
 its source files and hashes are checked before testing. Historical performance
 gates retain `9050a2d`. Set `CETTA_PERF_BASELINE_ROOT` to a clean checkout or a
 frozen artifact directory containing `baseline.json` and `baseline-stats.json`.

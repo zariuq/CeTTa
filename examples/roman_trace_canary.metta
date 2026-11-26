@@ -46,7 +46,7 @@
 ; A->D belief, including all revised forms.
 (= (target-matches)
    (collapse
-     (let ($TasksRet $BeliefsRet) (PLN.Derive (kb) (kb) 25)
+     (let ($TasksRet $BeliefsRet) (PLN.Derive (kb) (kb) 30)
           (case (superpose $BeliefsRet)
                 (((Sentence ((Inheritance A D) $TV) $Ev) ($TV $Ev)))))))
 

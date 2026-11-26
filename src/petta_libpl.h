@@ -68,6 +68,15 @@ bool petta_libpl_static_import(
     const char *file, PettaLibplStaticPredicateVisit visit, void *context,
     CettaCallOutcome *end);
 
+/* Whether static-import! finds `file` as its load would, from its .qlf, its
+ * .pl or its .metta, relative to the working directory, loading nothing;
+ * `end` is RAISED with the error the load raises when none is there (the
+ * .metta's existence error from open/3).  False when it is not found or no
+ * Prolog is available. */
+bool petta_libpl_static_import_source(
+    CettaLibPrologRuntime *runtime, Arena *arena, const char *file,
+    CettaCallOutcome *end);
+
 /* SWI's warning that a load redefined the static procedure name/arity, as
  * its consult prints it: rows a space held that a static-import! load
  * redefined. */

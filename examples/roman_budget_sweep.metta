@@ -2,10 +2,10 @@
 ; ROMAN BUDGET SWEEP --- schedule sensitivity of derivation
 ; ============================================================================
 ;
-; Companion to advection_trace_roman.metta.  The trace file uses maxsteps=25
+; Companion to advection_trace_roman.metta.  The trace file uses maxsteps=30
 ; based on the observed fact that
-;   - step 18 first derives (Inheritance A D) (stv 0.5 0.9) via one path,
-;   - step 19 revises to (stv 0.5 0.9473...) with the merged stamp.
+;   - step 28 first derives (Inheritance A D) (stv 0.5 0.9) via one path,
+;   - step 29 revises to (stv 0.5 0.9473...) with the merged stamp.
 ;
 ; That magic number is brittle.  This sweep turns it into a measurement:
 ; run PLN.Query at maxsteps in {5, 10, 15, 20, 25, 30, 40} on the same KB
@@ -14,9 +14,9 @@
 ; What we'd expect a priori:
 ;   - tiny budgets (5, 10):    target NOT YET derived; query returns ()
 ;                              or an empty-result variant
-;   - medium budget (15-20):    target derived along ONE path, single-stamp
+;   - medium budget (15-25):    target derived along ONE path, single-stamp
 ;                              confidence 0.9
-;   - sufficient budget (25+): target revised across BOTH paths, merged
+;   - sufficient budget (30+): target revised across BOTH paths, merged
 ;                              confidence ~0.9474
 ;
 ; What this shows: how quickly the engine reaches "complete" vs "merged"

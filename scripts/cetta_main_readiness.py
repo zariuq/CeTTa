@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime as dt
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import platform
@@ -183,6 +182,9 @@ def explicit_input_identity(root: Path) -> dict[str, str]:
         "scripts/rhocalc_cost_threaded_bench.py",
         "scripts/rhocalc_benchmark_regression.py",
         "scripts/rhocalc_cost_observer_transparency.py",
+        "scripts/check_rhocalc_cost_prefixes.py",
+        "scripts/rhocalc_cost_wire.py",
+        "tests/rhocalc_cost_run/causal_prefix_cases.expected",
         "tests/rhocalc_cost_run/parallel_claim_rollback_competition.mrho",
         "tests/rhocalc_cost_run/parallel_claim_rollback_competition.expected",
         "tests/test_manifest.tsv",
@@ -192,7 +194,6 @@ def explicit_input_identity(root: Path) -> dict[str, str]:
         "tools/check_petta_release_reference.py",
         "tests/support/compare_answers.py",
         "tests/support/check_compare_answers.py",
-        "tests/support/check_execution_lean_models.py",
         "tests/support/check_gparse_core_property.py",
     ]
     result: dict[str, str] = {}
@@ -222,7 +223,6 @@ def build_configuration_identity(root: Path) -> dict[str, Any]:
 
 def artifact_identity(
     root: Path,
-    mettapedia_root: Path,
     tier: str,
     manifest: dict[str, Any],
     anchors: list[dict[str, Any]],
@@ -247,12 +247,12 @@ def artifact_identity(
         "binaries": binary_identity(root),
         "inputs": explicit_input_identity(root),
         "compiler_and_build": build_configuration_identity(root),
-        "dependencies": {**dependency_identity(
+        "dependencies": dependency_identity(
             {
                 "PathMap": root.parent / "PathMap",
                 "MORK": root.parent / "MORK",
             }
-        ), "ExecutionTheory": execution_theory_identity(root, mettapedia_root)},
+        ),
         "property_schema": manifest["schema"],
         "property_manifest_sha256": model_sha256_file(root / PROPERTY_MANIFEST),
         "source_anchors": anchors,
@@ -263,25 +263,6 @@ def source_identity(artifact: dict[str, Any]) -> dict[str, Any]:
     """Require the same semantic inputs throughout a tier's execution."""
     return {**calibration_subject(artifact), "tier": artifact["tier"],
             "petta_oracle": artifact.get("petta_oracle")}
-
-
-def execution_theory_identity(root: Path, mettapedia: Path) -> dict[str, Any]:
-    spec = importlib.util.spec_from_file_location(
-        "cetta_execution_theory", root / "tests/support/check_execution_lean_models.py")
-    if spec is None or spec.loader is None:
-        raise RuntimeError("execution theory checker is missing")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    receipt = Path(os.environ.get(
-        "EXECUTION_MODEL_RECEIPT", "runtime/execution-models/theory-receipt.json")).expanduser()
-    if not receipt.is_absolute():
-        receipt = root / receipt
-    try:
-        return module.receipt_identity(mettapedia, receipt)
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        raise RuntimeError(
-            "execution theory evidence is missing or stale; "
-            "run make test-execution-theory with METTAPEDIA_ROOT") from error
 
 
 def ledger_record_path(root: Path, tier: str, key: str) -> Path:
@@ -552,7 +533,6 @@ def common_readiness_commands() -> list[list[str]]:
     # for accepted repairs and intentional differences from its reference.
     return [["make", "BUILD=main", target]
             for target in PETTA_CONTRACT_TARGETS] + [
-        ["make", "BUILD=main", "test-execution-theory"],
         ["make", "BUILD=main", "test-execution-semantic-ledger"],
         ["make", "BUILD=main", "test-correctness-all"],
         ["make", "BUILD=main", "test-profiles"],
@@ -561,7 +541,7 @@ def common_readiness_commands() -> list[list[str]]:
         ["make", "BUILD=main", "test-rhocalc-cost-commit-audit"],
         ["make", "BUILD=main", "test-rhocalc-cost-commit-audit-asan"],
         ["make", "BUILD=main", "test-rhocalc-cost-commit-audit-tsan"],
-        ["make", "BUILD=main", "test-rhocalc-cost-differential-required"],
+        ["make", "BUILD=main", "test-rhocalc-cost-prefixes"],
     ]
 
 
@@ -716,24 +696,6 @@ def main() -> int:
     if args.tier == "candidate":
         from cetta_candidate_readiness import run_candidate
         return run_candidate(args, root)
-    mettapedia = os.environ.get("METTAPEDIA_ROOT", "")
-    if not mettapedia:
-        print(
-            "FAIL: set METTAPEDIA_ROOT to the Lean project root; required "
-            "C-to-Lean gates may not be skipped",
-            file=sys.stderr,
-        )
-        return 2
-    mettapedia_root = Path(mettapedia).expanduser().resolve()
-    if not mettapedia_root.is_dir() or not any(
-        (mettapedia_root / name).is_file()
-        for name in ("lakefile.toml", "lakefile.lean")
-    ):
-        print(
-            "FAIL: METTAPEDIA_ROOT is not a Lean project root",
-            file=sys.stderr,
-        )
-        return 2
     petta_oracle_root: Path | None = None
     if args.tier == "exhaustive":
         petta_oracle = os.environ.get("PETTA_ORACLE_ROOT", "")
@@ -779,7 +741,7 @@ def main() -> int:
         manifest = load_property_manifest(root / PROPERTY_MANIFEST)
         anchors = resolve_source_anchors(root, manifest)
         initial_artifact = artifact_identity(
-            root, mettapedia_root, args.tier, manifest, anchors
+            root, args.tier, manifest, anchors
         )
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
@@ -806,7 +768,6 @@ def main() -> int:
     evidence.mkdir(parents=True, exist_ok=False)
 
     environment = os.environ.copy()
-    environment["METTAPEDIA_ROOT"] = str(mettapedia_root)
     environment["CETTA_CONSOLIDATION_BASELINE_BIN"] = consolidation_baseline(root)["binary"]
     if args.tier == "exhaustive":
         environment["BENCH_ALLOW_HEAVY"] = "1"
@@ -872,9 +833,6 @@ def main() -> int:
             "compiler": capture(["gcc", "--version"], root).splitlines()[0],
             "make": capture(["make", "--version"], root).splitlines()[0],
         },
-        "mettapedia_commit": capture(
-            ["git", "-C", str(mettapedia_root), "rev-parse", "HEAD"], root
-        ),
         "petta_oracle": initial_artifact['petta_oracle'],
         "petta_oracle_commit": (
             initial_artifact['petta_oracle']['checkout_commit']
@@ -947,7 +905,7 @@ def main() -> int:
             shutil.copy2(source, evidence / name)
     try:
         final_artifact = artifact_identity(
-            root, mettapedia_root, args.tier, manifest, anchors
+            root, args.tier, manifest, anchors
         )
     except (RuntimeError, ValueError, OSError) as exc:
         summary['status'] = 'failed'

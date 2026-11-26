@@ -3,9 +3,12 @@
 ; and who decided it when.  CeTTa's answers are pinned in the .expected file,
 ; so an entry that drifts is noticed; a difference missing from this file is
 ; found only by running both engines.  SWI-PeTTa's answers are those of the
-; in-house snapshot 9b016a39, re-verified 2026-09-29; entry 7's is that of
-; stable-fixed 9e8fbb6 (2026-11-19).  An entry leaves this file only when the
-; two engines agree.
+; in-house snapshot 9b016a39, re-verified 2026-09-29; entry 7's, the
+; stable-fixed lines of entry 14, and entries 25 to 27's are those of
+; stable-fixed e4e345f (re-verified 2026-11-26), which answers as CeTTa on
+; entries 2, 4, 8, 10 and 20; entry 22 gives stable-fixed e4e345f's and
+; upstream stable 76ae601's.  An entry leaves this file only when the two
+; engines agree.
 
 (= (twice $x) (* 2 $x))
 (= (boom) (/ 1 0))
@@ -29,6 +32,7 @@
 ;    specializer drops it, and the error reaches the catch:
 ;    (Error (evaluation_error zero_divisor) ...).
 ;    Decided: Zar, 2026-09-26 (goal.md §1.8, preservation).
+; stable-fixed e4e345f: as CeTTa
 !(catch (collapse (invoke boom)))
 ; 3. `let` and `let*` reached at run time are data, as `if`, `case` and `quote`
 ;    are in both engines, and running the data later runs the binding.
@@ -49,6 +53,7 @@
 ;    specialization: (1) after the import.
 ;    Decided: Oruži, 2026-09-26, as the unspecialized meaning; confirmed by
 ;    Zar committing it (ad1e6a94).
+; stable-fixed e4e345f: as CeTTa
 !(msort (collapse (app1 safe 1)))
 !(import! &self swi_differences_import)
 !(msort (collapse (app1 safe 1)))
@@ -84,6 +89,7 @@
 (= (seven) 7)
 (= (pick $h) (if (> $h 10) (let $c (seven) $h) (pick 20)))
 ; SWI-PeTTa: ()
+; stable-fixed e4e345f: as CeTTa
 !(collapse (pick 1))
 ; 9. Retired 2026-09-29: variable spelling is not observable, in answers or
 ;    inside strings (Zar), so CeTTa's $V0 and SWI-PeTTa's $_0 name the same
@@ -95,6 +101,7 @@
 ;     Decided: Zar, 2026-09-28, as a reference bug under the rule that unknown
 ;     expressions remain uninterpreted. Normal forward references after the
 ;     definitions are installed agree in both engines.
+; stable-fixed e4e345f: as CeTTa
 (= (before-install) (installed-later 5))
 !(before-install)
 (= (installed-later $n) (+ $n 1))
@@ -127,7 +134,7 @@
 (= (visibility-caller)
    (progn (add-atom &self (: visibility-f (-> VisibilityB %Undefined%)))
           (collapse (visibility-f visibility-b))))
-; SWI-PeTTa stable-fixed 9e8fbb6: ()
+; SWI-PeTTa stable-fixed e4e345f: ()
 !(visibility-caller)
 ; SWI-PeTTa, both qualified pins: ((Visible rejected))
 !(let $f visibility-f (collapse ($f rejected)))
@@ -142,11 +149,11 @@
 (: visibility-step (-> Number Number Number))
 (= (visibility-step $item $acc) rejected)
 (= (visibility-apply $f $a $b) ($f $a $b))
-; SWI-PeTTa stable-fixed c3adb86: (rejected)
+; SWI-PeTTa stable-fixed c3adb86 and e4e345f: (rejected)
 !(collapse (let $f visibility-step ($f 1 0)))
-; SWI-PeTTa stable-fixed c3adb86: (rejected)
+; SWI-PeTTa stable-fixed c3adb86 and e4e345f: (rejected)
 !(collapse (visibility-apply visibility-step 1 0))
-; SWI-PeTTa stable-fixed c3adb86: (rejected)
+; SWI-PeTTa stable-fixed c3adb86 and e4e345f: (rejected)
 !(collapse (foldl visibility-step (1) 0))
 ; 15. Rows that repeat one declaration are one declaration.  A call answers
 ;     once for them in both implementations; SWI's get-type lists every row,
@@ -230,6 +237,7 @@
 ;     (left b) was removed.  Logged as a known divergence whether or not the
 ;     reference is repaired (Zar, 2026-11-12).
 ; SWI-PeTTa: (true true true), ((a b) (a c) (a d) (b c) (b d) (c d)), (a b)
+; stable-fixed e4e345f: as CeTTa
 !(bind! &diff20 (new-space))
 !(add-atom &diff20 (edge c d))
 !(add-atom &diff20 (edge b c))
@@ -245,7 +253,53 @@
   (let $answer (match &diff20-times (, (left $x) (right $x)) $x)
     (let $gone (remove-atom &diff20-times (left b))
       (let $new (add-atom &diff20-times (right b)) $answer)))))
-; 21. pow-math keeps floating-point arithmetic in floats whenever either
+; 21. Withdrawn 2026-11-19, the day it was written: it was measured on an old
+;     stable-fixed export (c3adb86), and the reference's head has no such
+;     difference.
+; 22. A program is read when it is used: an occurrence is decided when it is
+;     reached, against the function definitions present then, so a head
+;     symbol that gains a function definition while a query, an equation's
+;     body or a lambda's body runs is called by the next occurrence that
+;     reaches it.  A call already entered keeps the alternatives it selected.
+;     This is the intended PeTTa semantics (P-DEF-4 and [DIFF-22] of the PeTTa
+;     spec).  SWI-PeTTa reads the program at the grain stock SWI-Prolog
+;     allows: at best a call runs the program as it stood when the call was
+;     entered (SWI-Prolog's logical update view), and upstream stable 76ae601
+;     translates each function definition once and keeps that translation.
+;     Stable-fixed e4e345f keeps the decisions a unit (a query, an equation's
+;     body, a lambda's body) made when it was translated: an occurrence
+;     translated as data stays data in that unit after add-atom defines its
+;     head, and `eval` translates its operand when it runs.  An edit to a
+;     function definition, a declaration or a translator rule translates
+;     again the stored clauses whose recorded decisions it changes, and a
+;     lambda entered after the edit is translated then.  Its README's example
+;     of this staging is the corpus program callquoteevalreduce, a recorded
+;     difference under this entry.
+;     Decided: Zar, 2026-11-19 (an occurrence is decided when it is reached)
+;     and 2026-11-26 ("This is what SWI-PeTTa SHOULD be, but the real
+;     SWI-PeTTa matches the limitations of SWI-Prolog").
+;     Answers of stable-fixed e4e345f on SWI-Prolog main-fixed 34f4339 and of
+;     upstream stable 76ae601 on stock SWI-Prolog 10.1.9:
+(= (reading-caller) (reading-late 1))
+; SWI-PeTTa stable-fixed e4e345f: (reading-late 1); upstream: (reading-late 1)
+!(let $u (add-atom &self (= (reading-late $x) (reading-called $x))) (reading-late 1))
+; SWI-PeTTa stable-fixed e4e345f: (reading-called 1); upstream: (reading-late 1)
+!(reading-caller)
+; SWI-PeTTa stable-fixed e4e345f and upstream: (reading-called 2)
+!(let $u (add-atom &self (= (reading-eval $x) (reading-called $x)))
+   (eval (reading-eval 2)))
+(= (reading-body)
+   (let $u (add-atom &self (= (reading-in-body $x) (reading-called $x)))
+     (reading-in-body 3)))
+; SWI-PeTTa stable-fixed e4e345f and upstream: (reading-in-body 3)
+!(reading-body)
+; SWI-PeTTa stable-fixed e4e345f and upstream: (reading-in-lambda 4)
+!((|-> () (let $u (add-atom &self (= (reading-in-lambda $x) (reading-called $x)))
+            (reading-in-lambda 4))))
+; SWI-PeTTa stable-fixed e4e345f: (reading-called 5); upstream: (reading-wrapped 5)
+!(let $u (add-atom &self (= (reading-wrapped $x) (reading-called $x)))
+   ((|-> () (reading-wrapped 5))))
+; 23. pow-math keeps floating-point arithmetic in floats whenever either
 ;     operand is a float, while exact integer/rational powers stay exact
 ;     (so (pow-math 2 0) is 1, while (pow-math 2.718281828459045 0.0),
 ;     (pow-math 2.5 0), (pow-math 1 2.5) and (pow-math 0 0.5) are floats).
@@ -263,7 +317,7 @@
 !(pow-math 1 2.5)
 !(pow-math 0 0.5)
 !(pow-math 2 0)
-; 22. -0.0 has the value of 0 and 0.0, so in min and max it ties them and
+; 24. -0.0 has the value of 0 and 0.0, so in min and max it ties them and
 ;     the tie decides as in entry 17: min answers its first operand, max its
 ;     second.  SWI-PeTTa's arithmetic puts -0.0 below 0 and 0.0 (min answers
 ;     -0.0, max the other); SWI-PeTTa's answers are SWI-Prolog's own min and
@@ -278,3 +332,35 @@
 !(max 0.0 -0.0)
 !(min 0 -0.0)
 !(max 0 -0.0)
+; 25. () is the empty expression, not a space: a space operation whose
+;     operand is () raises the term it raises for any expression that names
+;     no space, (Error (type_error atom ()) (context (: system (/ =.. 2)) _))
+;     for an expression to add, remove or match and current_predicate/1's
+;     term for get-atoms, and is-space () is false in both engines.
+;     SWI-PeTTa keeps a space's atoms under predicates named after the
+;     operand, and () is SWI-Prolog's [], an atom =../2 takes as a name: it
+;     adds, matches, gets and removes expressions under (), and refuses only
+;     an atom that is no expression, with (type_error atom ()), as CeTTa does.
+;     Decided 2026-11-26 by P-ERR-5's law: a space operand is a symbol.
+; SWI-PeTTa: true, (1), ((unit-item 1)), true
+!(catch (add-atom () (unit-item 1)))
+!(catch (collapse (match () (unit-item $x) $x)))
+!(catch (collapse (get-atoms ())))
+!(catch (remove-atom () (unit-item 1)))
+; 26. static-import! of an operand that names no space is in
+;     swi_differences_prolog.metta: it needs lib_import's Prolog.
+; 27. import! refuses a destination that names no space once the document is
+;     found and read, before any of the document runs: it raises add-atom's
+;     term for the document's first atom, an expression (P-ERR-5), so a
+;     refused import has no effects, whether or not the document holds an
+;     atom.  SWI-PeTTa loads the document into the operand and meets the
+;     operand only at the first atom it adds: the queries before that atom
+;     have run when it raises, and a document that holds no atom loads, its
+;     queries run, and the import answers true.  Both read the whole
+;     document first, so one that does not read raises its syntax error
+;     whatever the destination.
+;     Decided 2026-11-26 by P-ERR-5's law: a refused write has no effects.
+; SWI-PeTTa: (import-ran queries-first) printed, then the same error;
+; (import-ran queries-only) printed, then true
+!(catch (import! 42 lib/import_queries_first))
+!(catch (import! (, &a &b) lib/import_queries_only))

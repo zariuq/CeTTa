@@ -34,7 +34,7 @@
         {"path": "src/space.c", "symbol": "static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {", "expected_occurrences": 1},
         {"path": "src/space.c", "symbol": "static bool space_reserve_linear(", "expected_occurrences": 1},
         {"path": "src/term_universe.c", "symbol": "AtomId term_universe_store_atom_id(", "expected_occurrences": 1},
-        {"path": "src/term_universe.c", "symbol": "term_universe_compact32_auto_migration_threshold(", "expected_occurrences": 2}
+        {"path": "src/term_universe.c", "symbol": "term_universe_compact32_auto_migration_threshold(", "expected_occurrences": 3}
       ],
       "routine_witnesses": ["space-ladder:native", "make main-readiness-thresholds", "make test-space-term-universe-membership"],
       "exhaustive_witnesses": ["make main-readiness-space-ladders-exhaustive", "space-ladder-exhaustive:native@1000000", "make main-readiness-space-frontier", "space-frontier:backend:native@10000000", "make main-readiness-thresholds"],
@@ -115,7 +115,7 @@
         {"path": "src/rhocalc_core.c", "symbol": "static bool rhocost_parallel_try_claim(", "expected_occurrences": 1}
       ],
       "routine_witnesses": ["witness:rhocalc_cost_threaded_adaptive", "make test-rhocalc-cost-observer-transparency"],
-      "exhaustive_witnesses": ["make bench-rho-cost-threaded-heavy", "make test-rhocalc-cost-differential-required", "make test-rhocalc-cost-commit-audit-tsan"],
+      "exhaustive_witnesses": ["make bench-rho-cost-threaded-heavy", "make test-rhocalc-cost-prefixes", "make test-rhocalc-cost-commit-audit-tsan"],
       "positive_calibration": "make test-rhocalc-cost-observer-transparency",
       "negative_calibrations": ["negative:state-only-observer-materialization", "negative:claim-nonconservation"],
       "largest_scale_class": "cost-rho-funded-wave",

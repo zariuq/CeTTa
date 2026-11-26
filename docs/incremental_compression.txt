@@ -1452,13 +1452,14 @@ does not establish membership in the separately defined PrefixRuns domain.
 The shared codec requires both natural/word round trips; one-sided inverses
 can lose symbols or admit unrepresented natural outputs.
 
-  make test-ic-interpreter-correspondence \
+  make lean-alignment-ic-interpreter-correspondence \
     IC_THEORY_ROOT="$IC_THEORY_SOURCE" \
     IC_ORIGINAL_TOOLCHAIN="$IC_ORIGINAL_TOOLCHAIN" \
     METTAPEDIA_LEAN_ROOT="$METTAPEDIA_LEAN_PROJECT"
 
-The gate reuses each existing project cache and builds only its declared
-targets. Original-toolchain objects for the shared interfaces are separate
+This is a Lean alignment tool (mk/lean_alignment.mk), not a test: no test
+target or readiness tier runs it. It reuses each existing project cache and
+builds only its declared targets. Original-toolchain objects for the shared interfaces are separate
 qualification outputs, not copied caches. It checks that all relevant source
 bytes, pins and manifests remain unchanged during the run. Lean source paths
 are recorded without source fingerprints. Original reference linter warnings
@@ -1504,18 +1505,19 @@ comparison pays for the complete payload frame and fixed head code. These
 results do not establish constant-overhead reference universality of F or
 identify minimum programs in different universal interpreters.
 
-The two-toolchain gate above also checks this prefix bridge and the shared
+The two-toolchain alignment tool above also checks this prefix bridge and the shared
 FramedPrefixControls. The latter instantiate the existing shared E1/E2 codes,
 the canonical plain interpreter and the genuine trimmed prefix reference.
 They retain source-wide representation, contextual round trips, empty-header
 costs, noncanonical refusals and the uniform two-sided comparison.
 
-  make test-incremental-compression-joined \
+  make lean-alignment-incremental-compression-joined \
     IC_THEORY_ROOT="$IC_THEORY_SOURCE" \
     IC_ORIGINAL_TOOLCHAIN="$IC_ORIGINAL_TOOLCHAIN" \
     METTAPEDIA_LEAN_ROOT="$METTAPEDIA_LEAN_PROJECT"
 
-This joins the current native mechanism gate with that theorem qualification.
+This joins the current native mechanism gate (make test-incremental-compression)
+with that alignment tool.
 Passing it is not evidence of complete numerical-family discovery, held-out
 real-program utility or improved execution costs; those results retain their
 own workload-specific acceptance conditions.

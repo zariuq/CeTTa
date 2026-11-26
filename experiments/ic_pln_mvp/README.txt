@@ -19,10 +19,17 @@ Result and scope
 On the pinned real lib/petta/lib_pln.metta:
 
                        original    first feature    second feature
-  Stored-source nodes     2207          2186              2180
-  Archive bytes          59537         59092             59059
+  Stored-source nodes     2215          2194              2188
+  Archive bytes          59762         59317             59284
   Retained helpers           0             1                 2
   Uses of new helper         -             4                 2
+
+The pin is the source whose two consistency checks guard their divisions
+with `if` (2026-11-26): under `and`, which evaluates both operands, the
+first probe of the panel divided by zero.  The 2026-10-30 qualification
+(qualification.txt) recorded 2207 -> 2186 -> 2180 nodes and 59537 -> 59092
+-> 59059 bytes on its earlier source; the same two features are learned on
+both, 8 nodes and 225 archive bytes apart.
 
 The first helper is the shared similarity-to-inheritance computation. The
 second shares the guarded deduction-strength expression in Truth_Deduction
@@ -118,7 +125,7 @@ Cost: lib_ic_library_cost; final acceptance: lib_ic_packed.
 All these are ordinary MeTTa libraries; no corpus names entered C dispatch.
 
 Input SHA-256:
-  6b980321bbe9b49e5b12e2fcee0479ab1d5c7550c2104a67b0722a5b473da4ee
+  74febcafac3e99a280e342bc5d548e7cb0ffe697317e89a29acca48ea59a67ec
 Working review archive SHA-256:
   b705188c3807c6f8fdaee8ac32684a9b3981bc0184e7327c88e393c28545ec2c
 The /safe profile, observation panel and counterexamples come from the returned

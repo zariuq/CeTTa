@@ -144,6 +144,12 @@ typedef enum {
      * Source expressions cannot manufacture these value constructors. */
     CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY = 11,
     CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE = 12,
+    /* (tag $evidence application): an application in a written head's
+     * result position whose typed partial application also binds $evidence
+     * to the declaration instances it leaves standing.  Only the PeTTa
+     * search machine makes one, inside a head it evaluates
+     * (petta_machine_try_staged_typed_call); it is never a value. */
+    CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE = 13,
 } CettaInternalTag;
 
 static inline bool cetta_internal_tag_is_list(int64_t tag) {

@@ -192,6 +192,13 @@ def main():
     built = '!(cons-atom 1 (2 3))\n'
     if agrees('petta', built, '(1 2 3)\n', '(3 2 1)\n', cetta):
         failures.append('petta: a built list compared as a bag')
+    # A query's answers agree up to the names of their variables, sharing
+    # kept: SWI-PeTTa spells them $_0, CeTTa $V0.
+    open_term = '!(p $x $x)\n'
+    if not agrees('petta', open_term, '(p $_0 $_0)\n', '(p $V0 $V0)\n', cetta):
+        failures.append('petta: variable names compared as data')
+    if agrees('petta', open_term, '(p $_0 $_1)\n', '(p $V0 $V0)\n', cetta):
+        failures.append('petta: sharing lost between spellings')
     if failures:
         print('FAIL: the answer comparator disagrees with the observation contract:')
         for failure in failures:

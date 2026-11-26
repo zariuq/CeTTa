@@ -14,7 +14,9 @@
 #                              MeTTapedia repository), with the modules a gate
 #                              imports built by `lake build`.  By default, a
 #                              Mettapedia checkout beside this repository.
-#                              The NIK exporter gates (test-prime-nik-*, from the
+#                              The Lean alignment tools are in
+#                              mk/lean_alignment.mk; the NIK exporters there
+#                              (lean-alignment-prime-nik-*, from the
 #                              tests/support/export_prime_nik_*.lean exporters)
 #                              need these modules built in that project:
 #                                lake build \
@@ -89,8 +91,6 @@
 #   IGGP_ROOT, INFCONTROL_REPO the ILP benchmark gates compare against.
 #   *_MEMORY_BENCH_SOURCE      A program or Metamath source for a memory
 #                              benchmark.
-
-.PHONY: test-execution-theory
 
 .PHONY: test-gslt2parse-rho-syntax-convergence-v1
 
@@ -243,13 +243,6 @@
 .PHONY: benchmark-metamath-state-transition-direct-closed-petta-v1
 
 .PHONY: test-metamath-bulk-actions-direct-swi-compat-v1
-
-.PHONY: test-pattern-lean-models
-
-test-pattern-lean-models:
-	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
-	@python3 tests/support/check_pattern_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
-		--receipt "$(PATTERN_MODEL_RECEIPT)"
 
 test-metamath-bulk-actions-direct-swi-compat-v1: \
 		test-metamath-insert-each-matching-direct-petta-v1 \
@@ -1326,30 +1319,13 @@ test-prime-nik-megalodon-term-v1: \
 		$(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1) \
 		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
 	@set -eu; \
 	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
 		echo "SKIP: Megalodon executable term differential (binary unavailable)"; \
 		exit 0; \
 	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
 	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-term.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
 	python3 $(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
@@ -1364,30 +1340,13 @@ test-prime-nik-megalodon-polymorphic-v1: \
 		$(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1) \
 		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
 	@set -eu; \
 	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
 		echo "SKIP: Megalodon executable polymorphic differential (binary unavailable)"; \
 		exit 0; \
 	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
 	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-poly.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
 	python3 $(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
@@ -1402,30 +1361,13 @@ test-prime-nik-megalodon-known-implication-v1: \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1) \
 		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
 	@set -eu; \
 	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
 		echo "SKIP: Megalodon executable known-implication differential (binary unavailable)"; \
 		exit 0; \
 	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
 	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-known-imp.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
 	python3 $(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
@@ -1439,30 +1381,13 @@ test-prime-nik-megalodon-definition-v1: \
 		$(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1) \
 		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
 	@set -eu; \
 	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
 		echo "SKIP: Megalodon executable definition differential (binary unavailable)"; \
 		exit 0; \
 	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
 	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-definition.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
 	python3 $(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
@@ -1477,18 +1402,6 @@ test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-known-implication-v1 \
 		test-prime-nik-megalodon-definition-v1 \
 		test-prime-nik-megalodon-tactics-package-v1
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	if [ -n "$$lean_root" ]; then \
-		$(MAKE) -s METTAPEDIA_LEAN_ROOT="$$lean_root" \
-			test-prime-nik-lean-export-v1; \
-	else \
-		echo "SKIP: Prime NIK Lean export (Mettapedia Lean project unavailable)"; \
-	fi
 
 test-gslt2parse-c-horn-v1-differential: test-gslt2parse-c-horn-v1-native
 	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
@@ -1631,18 +1544,11 @@ test-gslt2parse-he-string-slr-specialization-v1: \
 		--binary $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN) \
 		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-# With GSLT2PARSE_HE_ROOT and METTAPEDIA_ROOT set, the Rust and LeaTTa
-# readers are observed again at their pinned sources; without them CeTTa is
-# observed against the fixture's recorded observations of both.
+# CeTTa's HE parser is observed against the fixture's recorded observations of
+# the Rust and LeaTTa parsers; lean-alignment-gslt2parse-he-reader-escape-v1
+# (mk/lean_alignment.mk) observes both again at their pinned sources.
 test-gslt2parse-he-reader-escape-differential-v1:
-	@if [[ -n "$(strip $(GSLT2PARSE_HE_ROOT))" && -n "$${METTAPEDIA_ROOT:-}" ]]; then \
-		python3 tools/test_he_reader_escape_differential_v1.py \
-			--he-root "$(GSLT2PARSE_HE_ROOT)" \
-			--cetta-root "$(CURDIR)" \
-			--mettapedia-root "$${METTAPEDIA_ROOT}"; \
-	else \
-		python3 tools/test_he_reader_escape_differential_v1.py --recorded --cetta-root "$(CURDIR)"; \
-	fi
+	@python3 tools/test_he_reader_escape_differential_v1.py --recorded --cetta-root "$(CURDIR)"
 
 test-gslt2parse-he-reader-source-faithfulness-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
@@ -1667,18 +1573,13 @@ test-gslt2parse-he-reader-source-correspondence-v1: \
 	fi
 	@python3 tools/test_he_reader_source_correspondence_v1.py \
 		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--cetta-root "$(CURDIR)" \
-		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
+		--cetta-root "$(CURDIR)"
 
-# With METTAPEDIA_ROOT set (its lean/mettapedia project) the checked-in
-# abstract syntax is regenerated from rhoCalc at its pinned origin and
-# compared; without it the checked-in export is the record.
+# The checked-in export of the rho abstract syntax is the record;
+# lean-alignment-gslt2parse-rho-abstract-syntax-v1 (mk/lean_alignment.mk)
+# regenerates it from rhoCalc at its pinned origin and compares.
 test-gslt2parse-rho-abstract-syntax-v1:
-	@if [[ -n "$${METTAPEDIA_ROOT:-}" ]]; then \
-		python3 tools/test_rho_abstract_syntax_v1.py --mettapedia-root "$${METTAPEDIA_ROOT}"; \
-	else \
-		python3 tools/test_rho_abstract_syntax_v1.py --recorded; \
-	fi
+	@python3 tools/test_rho_abstract_syntax_v1.py --recorded
 
 test-gslt2parse-rhocalc-parser-pack-v1: \
 		$(BIN) \
@@ -2414,25 +2315,6 @@ qualify-json-projection-refinement-lean-v1:
 		lake env lean -DwarningAsError=true "$$client")
 	@echo '(JsonProjectionRefinementLeanV1Summary 8 8 0)'
 
-test-ic-interpreter-correspondence:
-	@test -n "$(strip $(IC_ORIGINAL_TOOLCHAIN))" || { \
-		echo 'Set IC_ORIGINAL_TOOLCHAIN to the installed toolchain matching ic-theory/lean-toolchain' >&2; exit 2; \
-	}
-	@test -f "$(METTAPEDIA_LEAN_CHECKOUT)/lakefile.lean" || { \
-		echo 'Set METTAPEDIA_LEAN_ROOT to the Mettapedia Lean project' >&2; exit 2; \
-	}
-	python3 tests/support/test_ic_interpreter_bridge.py
-	python3 tests/support/check_ic_interpreter_bridge.py \
-		--ic-theory "$(IC_THEORY_ROOT)" \
-		--mettapedia "$(abspath $(METTAPEDIA_LEAN_CHECKOUT)/../..)" \
-		--original-toolchain "$(IC_ORIGINAL_TOOLCHAIN)" \
-		--output runtime/ic-original-interpreter-qualification
-
-test-execution-theory:
-	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
-	@python3 tests/support/check_execution_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
-		--receipt "$(EXECUTION_MODEL_RECEIPT)"
-
 # Every provider shares one Lean runtime: Lean modules may initialize only
 # once per process, so the providers are built together.
 .PHONY: build-lang-compilers
@@ -2445,19 +2327,13 @@ build-lang-compilers:
 
 build-lang-datalog: build-lang-compilers
 
-.PHONY: test-lang-provider-coexistence
-test-lang-provider-coexistence: $(BIN)
-	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
-	work="$$(mktemp -d runtime/lang-provider-coexistence.XXXXXX)"; \
-	python3 tests/support/check_lang_provider_coexistence.py ./$(BIN) "$$work/checks" --lean-root "$$lean_root"
-
 # Regenerate the language package files listed in langdef/lang/manifest.json
 # from a Mettapedia checkout and compare them with the shipped copies.
 .PHONY: check-lang-package-regeneration
 check-lang-package-regeneration:
 	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Mettapedia checkout' >&2; exit 2; }
-	@python3 tools/lang_package_manifest.py check --regenerate --mettapedia "$(METTAPEDIA_ROOT)"
+	@python3 tools/lang_package_manifest.py check
+	@python3 tools/lang_package_regenerate.py --mettapedia "$(METTAPEDIA_ROOT)"
 
 # SWI-Prolog library(chr) is the reference here only; lang calls run no
 # reference engine.

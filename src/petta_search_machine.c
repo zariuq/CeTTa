@@ -312,6 +312,14 @@ typedef enum {
     PETTA_GOAL_APPLY_READY,
     PETTA_GOAL_LAMBDA_READY,
     PETTA_GOAL_PARTIAL_READY,
+    /* A written head's value continued by the applications written around
+     * the head (petta_machine_try_staged_typed_call): `first` is
+     * (VALUE (ARGUMENTS) ...), one list of arguments for each application
+     * from the head outward; `third` is (tag IN OUT), IN bound to the
+     * declaration instances that the partial application in the head's
+     * result position left standing, OUT, unless (), receiving those that
+     * the continuation leaves standing. */
+    PETTA_GOAL_EVIDENCE_COMPLETION,
     PETTA_GOAL_OVERAPPLICATION_READY,
     PETTA_GOAL_BOOLEAN_READY,
     PETTA_GOAL_NUMERIC_MINMAX_READY,
@@ -660,6 +668,7 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_APPLY_READY:
     case PETTA_GOAL_LAMBDA_READY:
     case PETTA_GOAL_PARTIAL_READY:
+    case PETTA_GOAL_EVIDENCE_COMPLETION:
     case PETTA_GOAL_OVERAPPLICATION_READY:
     case PETTA_GOAL_RELATIONAL_EXTENSION_READY:
     case PETTA_GOAL_EQUATION_ONLY:
@@ -16835,13 +16844,20 @@ static bool petta_joint_instance_eligible(const Atom *instance,
  * stage that no declaration governs, the call is untyped: its arguments are
  * evaluated and nothing is checked.  CALLS are the declarations of the
  * first stage, and POSITION_PLANS[i], when given, the plan of argument i.
+ * EVIDENCE_IN, when given, is the list of instances a partial application
+ * left standing for the values of the first stage's arguments: those are its
+ * values, neither run nor checked again, and the later stages continue from
+ * that evidence (stable-fixed's evidence_chains_for_call).  EVIDENCE_OUT,
+ * when given and the call is partial, receives the instances it leaves
+ * standing.
  */
 static bool petta_machine_schedule_joint_stages(
     PettaMachineImpl *machine, Atom *expression, Atom *expected,
     const PettaTypeCall *calls, uint32_t count, bool hold_body,
     uint32_t barrier, PettaJointCompletion completion,
     const PettaPlanNode *plan, const PettaPlanNode *const *position_plans,
-    const CettaExprLen *stage_ends, uint32_t stage_count) {
+    const CettaExprLen *stage_ends, uint32_t stage_count,
+    Atom *evidence_in, Atom *evidence_out) {
     Arena *heap = &machine->heap;
     CettaExprLen length = expression->expr.len;
     CettaExprLen nargs = length - 1u;
@@ -16932,6 +16948,11 @@ static bool petta_machine_schedule_joint_stages(
                 guarded[position] = guarded[position] ||
                     petta_joint_mode_guards(mode);
             }
+            /* The evidence already stands for these values. */
+            if (evidence_in && stage == 0u) {
+                held[position] = true;
+                guarded[position] = false;
+            }
         }
         begin = stage_ends[stage] + 1u;
     }
@@ -16940,7 +16961,8 @@ static bool petta_machine_schedule_joint_stages(
     bool overapplied_typed = completion == PETTA_JOINT_OVERAPPLIED &&
         typed_stages == stage_count;
     ready[0] = expression->expr.elems[0];
-    Atom *standing = atom_expr(heap, instances, count);
+    Atom *standing = evidence_in ? evidence_in
+                                 : atom_expr(heap, instances, count);
     if (!standing)
         return false;
     /* No declaration governs the call: its arguments are evaluated and
@@ -17002,6 +17024,13 @@ static bool petta_machine_schedule_joint_stages(
         CettaExprIndex subject =
             head == g_builtin_syms.pat_case_forward ? 1u : 2u;
         call.third = subject < length ? ready_call->expr.elems[subject] : NULL;
+    }
+    if (completion == PETTA_JOINT_PARTIAL && evidence_out) {
+        call.third = atom_expr3(heap,
+            atom_internal_tag(heap, CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE),
+            evidence_out, standing);
+        if (!call.third)
+            return false;
     }
     PettaGoal result_check = {0};
     if (result_step) {
@@ -17077,7 +17106,7 @@ static bool petta_machine_schedule_joint_typed_call(
     return petta_machine_schedule_joint_stages(
         machine, expression, expected, calls, count, hold_body, barrier,
         partial ? PETTA_JOINT_PARTIAL : PETTA_JOINT_CALL, plan, NULL,
-        &end, 1u);
+        &end, 1u, NULL, NULL);
 }
 
 typedef struct {
@@ -29095,6 +29124,23 @@ static __attribute__((cold, noinline)) bool petta_machine_try_filtered_match(
                                               barrier);
 }
 
+/* A read of REFERENCE, which names no space, raises what the reference's
+ * match raises for its pattern (petta_semantics_space_read_error), both read
+ * through the branch's bindings. */
+static bool petta_machine_raise_space_read_error(
+    PettaMachineImpl *machine, Atom *reference, Atom *pattern) {
+    const Bindings *bindings = search_context_bindings(&machine->search);
+    Atom *location = petta_machine_apply_bindings(
+        machine, bindings, &machine->heap, reference);
+    Atom *read = pattern
+        ? petta_machine_apply_bindings(machine, bindings, &machine->heap,
+                                       pattern)
+        : NULL;
+    return location && (read || !pattern) &&
+        petta_machine_raise_error(machine,
+            petta_semantics_space_read_error(&machine->heap, location, read));
+}
+
 static bool petta_machine_start_ready_match_mode(
     PettaMachineImpl *machine, Atom *reference, Atom *pattern,
     Atom *template, Atom *expected, uint32_t barrier,
@@ -29171,8 +29217,8 @@ static bool petta_machine_start_ready_match_mode(
         &cursor_admitted);
     if (cursor_admitted) {
         if (reference->kind == ATOM_VAR)
-            return petta_machine_raise_error(machine,
-                petta_semantics_space_operand_error(&machine->heap, reference));
+            return petta_machine_raise_space_read_error(
+                machine, reference, pattern);
         /* Each conjunct is a match choice.  Unification writes the leg's
          * bindings into the caller's branch image, and the next conjunct
          * snapshots occurrences when that leg begins.  A continuation can
@@ -29246,8 +29292,8 @@ static bool petta_machine_start_ready_match_mode(
     if (!target) {
         if (reference->kind == ATOM_SYMBOL)
             return false;
-        return petta_machine_raise_error(machine,
-            petta_semantics_space_operand_error(&machine->heap, reference));
+        return petta_machine_raise_space_read_error(
+            machine, reference, pattern);
     }
 
     /* A template branching on comparisons of the solutions' values runs its
@@ -29302,11 +29348,9 @@ static bool petta_machine_start_ready_eq_match(
         ? machine->host.resolve_space(
               machine->host.context, machine->space, &machine->heap, reference)
         : NULL;
-    if (!target) {
-        return petta_machine_raise_error(
-            machine,
-            petta_semantics_space_operand_error(&machine->heap, reference));
-    }
+    if (!target)
+        return petta_machine_raise_space_read_error(
+            machine, reference, pattern);
     return petta_machine_start_ready_eq_match_space(
         machine, target, pattern, template, expected, barrier, failure);
 }
@@ -36758,12 +36802,154 @@ static const PettaPlanNode *petta_machine_completion_plan(
  * on (petta_machine_schedule_joint_stages).  A head held by a variable, or
  * computed by a call, is not written: it runs with its arguments as one
  * tuple (P-TYPE-8, boundary 1).  Nested heads, (((f a) b) c), are stages
- * too while each inner application is still partial. */
+ * too while each inner application is still partial.
+ *
+ * A head may also be written as a form that answers the value of one of its
+ * children (petta_semantics_head_result_child): ((progn e (f a)) b),
+ * ((let $x v (f a $x)) b), ((once (f a)) b).  The form runs as written,
+ * except that the partial application in its result position also hands
+ * on the instances it leaves standing; the application written around the
+ * head continues from them, as stable-fixed's translator passes a partial
+ * application's evidence through these forms.  So a captured argument is
+ * not checked again when a later argument removes its declaration.
+ * EVIDENCE_OUT, when given, receives the instances that the whole call
+ * leaves standing when it is itself still partial. */
+enum {
+    PETTA_STAGE_CAP = 16u,
+    /* Forms nested in a head's result position beyond this many run as
+     * written: their partial application's arguments are checked again. */
+    PETTA_EVIDENCE_HEAD_DEPTH = 1024u,
+};
+
+/* An application of a function that its declarations type: the program's,
+ * or an intrinsic operation that obeys its declarations
+ * (petta_machine_declared_grounded); a name the language dispatches
+ * otherwise keeps that dispatch. */
+static bool petta_machine_typed_application(
+    PettaMachineImpl *machine, const Atom *application) {
+    if (!application || application->kind != ATOM_EXPR ||
+        application->expr.len < 2u ||
+        application->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId head = application->expr.elems[0]->sym_id;
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
+    return petta_semantics_form(head) == PETTA_FORM_NONE &&
+        space_theory_view_head_declares_type(&view, head) &&
+        (petta_machine_has_equations(machine, head) ||
+         petta_machine_declared_grounded(machine, head));
+}
+
+/* Whether the form HEAD, written as an application's head, answers through
+ * its result children (petta_semantics_head_result_child) an application of
+ * a typed function, directly or as the innermost of written heads. */
+static bool petta_machine_evidence_head(
+    PettaMachineImpl *machine, Atom *head) {
+    for (uint32_t step = 0u; step < PETTA_EVIDENCE_HEAD_DEPTH; step++) {
+        CettaExprIndex child = petta_semantics_head_result_child(head);
+        if (child == 0u)
+            return false;
+        Atom *result = head->expr.elems[child];
+        if (petta_semantics_head_result_child(result) != 0u) {
+            head = result;
+            continue;
+        }
+        Atom *inner = result;
+        while (inner->kind == ATOM_EXPR && inner->expr.len > 0u &&
+               inner->expr.elems[0]->kind == ATOM_EXPR)
+            inner = inner->expr.elems[0];
+        if (inner != result && petta_semantics_head_result_child(inner) != 0u) {
+            head = inner;
+            continue;
+        }
+        return petta_machine_typed_application(machine, inner);
+    }
+    return false;
+}
+
+/* HEAD with the application in its result position written as
+ * (tag EVIDENCE application) (CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE). */
+static Atom *petta_machine_mark_evidence(
+    PettaMachineImpl *machine, Atom *head, Atom *evidence) {
+    Arena *heap = &machine->heap;
+    CettaExprIndex child = petta_semantics_head_result_child(head);
+    Atom *result = head->expr.elems[child];
+    Atom *marked = petta_semantics_head_result_child(result) != 0u
+        ? petta_machine_mark_evidence(machine, result, evidence)
+        : atom_expr3(heap, atom_internal_tag(
+              heap, CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE), evidence, result);
+    if (!marked ||
+        !cetta_expr_len_mul_fits_size(head->expr.len, sizeof(Atom *)))
+        return NULL;
+    Atom **elements = arena_alloc(
+        heap, sizeof(*elements) * (size_t)head->expr.len);
+    if (!elements)
+        return NULL;
+    memcpy(elements, head->expr.elems,
+           sizeof(*elements) * (size_t)head->expr.len);
+    elements[child] = marked;
+    return atom_expr(heap, elements, head->expr.len);
+}
+
+/* The occurrence (tag EVIDENCE APPLICATION), viewed. */
+static bool petta_machine_evidence_view(
+    Atom *atom, Atom **evidence, Atom **application) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        !atom_is_internal_tag(atom->expr.elems[0],
+                              CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE))
+        return false;
+    *evidence = atom->expr.elems[1];
+    *application = atom->expr.elems[2];
+    return true;
+}
+
+/* Run HEAD, a form, as written but for the evidence its result position's
+ * partial application hands on, then continue its value with the arguments
+ * of LEVELS[DEPTH-1] (written around HEAD), then of each enclosing level
+ * (PETTA_GOAL_EVIDENCE_COMPLETION). */
+static bool petta_machine_stage_evidence_head(
+    PettaMachineImpl *machine, Atom *const *levels, uint32_t depth,
+    Atom *head, Atom *expected, uint32_t barrier, Atom *evidence_out,
+    PettaMachineStep *failure) {
+    Arena *heap = &machine->heap;
+    Atom *evidence = petta_fresh_variable(machine);
+    Atom *value = petta_fresh_variable(machine);
+    Atom *marked = evidence
+        ? petta_machine_mark_evidence(machine, head, evidence) : NULL;
+    Atom **stages = arena_alloc(heap, sizeof(*stages) * ((size_t)depth + 1u));
+    if (!value || !marked || !stages) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    stages[0] = value;
+    for (uint32_t stage = 0u; stage < depth; stage++) {
+        Atom *level = levels[depth - 1u - stage];
+        stages[stage + 1u] = atom_expr(
+            heap, level->expr.elems + 1u, level->expr.len - 1u);
+        if (!stages[stage + 1u]) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    Atom *continuation = atom_expr(heap, stages, depth + 1u);
+    Atom *carried = atom_expr3(heap,
+        atom_internal_tag(heap, CETTA_INTERNAL_TAG_PETTA_TYPE_EVIDENCE),
+        evidence, evidence_out ? evidence_out : atom_unit(heap));
+    if (!continuation || !carried ||
+        !petta_goal_push(machine, &(PettaGoal){
+            .kind = PETTA_GOAL_EVIDENCE_COMPLETION, .barrier = barrier,
+            .first = continuation, .second = expected, .third = carried,
+        }) ||
+        !petta_push_solve(machine, marked, value, barrier)) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
 static bool petta_machine_try_staged_typed_call(
     PettaMachineImpl *machine, Atom *expression, Atom *expected,
     uint32_t barrier, const PettaPlanNode *plan, bool *handled,
-    PettaMachineStep *failure) {
-    enum { PETTA_STAGE_CAP = 16u };
+    PettaMachineStep *failure, Atom *evidence_out) {
     *handled = false;
     if (!petta_machine_joint_typed_calls(machine) ||
         expression->kind != ATOM_EXPR || expression->expr.len < 2u ||
@@ -36790,19 +36976,14 @@ static bool petta_machine_try_staged_typed_call(
         level = head;
         level_plan = head_plan;
     }
-    /* The function is the program's, or an intrinsic operation that obeys
-     * its declarations (petta_machine_declared_grounded); a name the
-     * language dispatches otherwise keeps that dispatch. */
-    SpaceTheoryView view = space_theory_view_borrow(machine->space);
-    if (level->kind != ATOM_EXPR || level->expr.len < 2u ||
-        level->expr.elems[0]->kind != ATOM_SYMBOL ||
-        petta_semantics_form(level->expr.elems[0]->sym_id) !=
-            PETTA_FORM_NONE ||
-        !space_theory_view_head_declares_type(
-            &view, level->expr.elems[0]->sym_id) ||
-        !(petta_machine_has_equations(machine, level->expr.elems[0]->sym_id) ||
-          petta_machine_declared_grounded(machine,
-                                          level->expr.elems[0]->sym_id)))
+    if (petta_semantics_head_result_child(level) != 0u &&
+        petta_machine_evidence_head(machine, level)) {
+        *handled = true;
+        return petta_machine_stage_evidence_head(
+            machine, levels, depth, level, expected, barrier, evidence_out,
+            failure);
+    }
+    if (!petta_machine_typed_application(machine, level))
         return false;
     levels[depth] = level;
     level_plans[depth++] = level_plan;
@@ -36896,11 +37077,223 @@ static bool petta_machine_try_staged_typed_call(
         last == PETTA_PARTIAL_YES ? PETTA_JOINT_PARTIAL
         : last == PETTA_PARTIAL_OVERAPPLIED ? PETTA_JOINT_OVERAPPLIED
         : PETTA_JOINT_CALL,
-        NULL, plans, ends, depth);
+        NULL, plans, ends, depth, NULL, evidence_out);
     free(calls);
     if (!scheduled)
         *failure = PETTA_MACHINE_STEP_CAPACITY;
     return scheduled;
+}
+
+/* The application APPLICATION in a written head's result position, whose
+ * typed partial application also binds EVIDENCE to the instances it leaves
+ * standing.  An application that is no typed partial application when it is
+ * reached runs as it is, and EVIDENCE stays unbound. */
+static bool petta_machine_solve_evidenced(
+    PettaMachineImpl *machine, Atom *application, Atom *expected,
+    uint32_t barrier, Atom *evidence, PettaMachineStep *failure) {
+    bool handled = false;
+    if (application->kind == ATOM_EXPR && application->expr.len >= 2u &&
+        application->expr.elems[0]->kind == ATOM_EXPR) {
+        bool scheduled = petta_machine_try_staged_typed_call(
+            machine, application, expected, barrier, NULL, &handled,
+            failure, evidence);
+        if (handled)
+            return scheduled;
+    } else if (petta_machine_joint_typed_calls(machine) &&
+               petta_machine_typed_application(machine, application) &&
+               petta_machine_has_equations(
+                   machine, application->expr.elems[0]->sym_id)) {
+        PettaPartialDecision decision =
+            petta_machine_named_partial_decision(machine, application);
+        if (decision == PETTA_PARTIAL_INVALIDATED) {
+            *failure = PETTA_MACHINE_STEP_INVALIDATED;
+            return false;
+        }
+        if (decision == PETTA_PARTIAL_YES) {
+            PettaTypeCall *calls = NULL;
+            uint32_t count = 0u;
+            bool hold_body = false;
+            if (!petta_machine_type_calls(
+                    machine, application->expr.elems[0],
+                    application->expr.len - 1u, &calls, &count,
+                    &hold_body)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            if (count > 0u) {
+                CettaExprLen end = application->expr.len - 1u;
+                bool scheduled = petta_machine_schedule_joint_stages(
+                    machine, application, expected, calls, count, false,
+                    barrier, PETTA_JOINT_PARTIAL, NULL, NULL, &end, 1u,
+                    NULL, evidence);
+                free(calls);
+                if (!scheduled)
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return scheduled;
+            }
+            free(calls);
+        }
+    }
+    if (petta_push_solve(machine, application, expected, barrier))
+        return true;
+    *failure = PETTA_MACHINE_STEP_CAPACITY;
+    return false;
+}
+
+/* PETTA_GOAL_EVIDENCE_COMPLETION: the written head's value continued by the
+ * applications written around it.  When the head's result position left
+ * instances standing and the value is that partial application, the
+ * continuation is its later stages, from those instances
+ * (petta_machine_schedule_joint_stages); otherwise the applications run on
+ * the value as written. */
+static bool petta_machine_evidence_completion(
+    PettaMachineImpl *machine, const PettaGoal *goal,
+    PettaMachineStep *failure) {
+    Arena *heap = &machine->heap;
+    const Bindings *environment = search_context_bindings(&machine->search);
+    Atom *stages = goal->first;
+    Atom *evidence = NULL;
+    Atom *out = NULL;
+    if (!stages || stages->kind != ATOM_EXPR || stages->expr.len < 2u ||
+        stages->expr.len > PETTA_STAGE_CAP ||
+        !petta_machine_evidence_view(goal->third, &evidence, &out)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    if (out->kind == ATOM_EXPR && out->expr.len == 0u)
+        out = NULL;
+    uint32_t depth = (uint32_t)stages->expr.len - 1u;
+    Atom *value = petta_machine_apply_bindings(
+        machine, environment, heap, stages->expr.elems[0]);
+    evidence = petta_machine_apply_bindings(machine, environment, heap, evidence);
+    if (!value || !evidence) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    Atom *base = NULL;
+    Atom *held = NULL;
+    if (evidence->kind == ATOM_EXPR && evidence->expr.len > 0u &&
+        petta_semantics_partial_view(value, &base, &held) &&
+        base->kind == ATOM_SYMBOL) {
+        CettaExprLen ends[PETTA_STAGE_CAP];
+        CettaExprLen total = held->expr.len;
+        ends[0] = total;
+        for (uint32_t stage = 1u; stage <= depth; stage++) {
+            total += stages->expr.elems[stage]->expr.len;
+            ends[stage] = total;
+        }
+        if (!cetta_expr_len_mul_fits_size(total + 1u, sizeof(Atom *))) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        Atom **elements = arena_alloc(
+            heap, sizeof(*elements) * (size_t)(total + 1u));
+        if (!elements) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        elements[0] = base;
+        memcpy(elements + 1u, held->expr.elems,
+               sizeof(*elements) * (size_t)held->expr.len);
+        for (uint32_t stage = 1u; stage <= depth; stage++) {
+            Atom *arguments = stages->expr.elems[stage];
+            memcpy(elements + 1u + ends[stage - 1u], arguments->expr.elems,
+                   sizeof(*elements) * (size_t)arguments->expr.len);
+        }
+        /* Every stage but the last is itself a partial application. */
+        bool staged = true;
+        for (uint32_t stage = 0u; staged && stage < depth; stage++) {
+            Atom *prefix = atom_expr(heap, elements, ends[stage] + 1u);
+            PettaPartialDecision decision = prefix
+                ? petta_machine_named_partial_decision(machine, prefix)
+                : PETTA_PARTIAL_NO;
+            if (decision == PETTA_PARTIAL_INVALIDATED) {
+                *failure = PETTA_MACHINE_STEP_INVALIDATED;
+                return false;
+            }
+            staged = decision == PETTA_PARTIAL_YES;
+        }
+        Atom *call = staged ? atom_expr(heap, elements, total + 1u) : NULL;
+        PettaPartialDecision last = call
+            ? petta_machine_named_partial_decision(machine, call)
+            : PETTA_PARTIAL_NO;
+        if (last == PETTA_PARTIAL_INVALIDATED) {
+            *failure = PETTA_MACHINE_STEP_INVALIDATED;
+            return false;
+        }
+        PettaTypeCall *calls = NULL;
+        uint32_t count = 0u;
+        bool hold_body = false;
+        if (call && !petta_machine_type_calls(
+                machine, base, ends[0], &calls, &count, &hold_body)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        if (call && count > 0u) {
+            /* A complete call's body is held by the declarations of its own
+             * number of arguments (P-TYPE-6). */
+            bool hold_complete = false;
+            if (last == PETTA_PARTIAL_NO) {
+                PettaTypeCall *own = NULL;
+                uint32_t own_count = 0u;
+                if (!petta_machine_type_calls(machine, base, total, &own,
+                                              &own_count, &hold_complete)) {
+                    free(calls);
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                free(own);
+            }
+            bool scheduled = petta_machine_schedule_joint_stages(
+                machine, call, goal->second, calls, count, hold_complete,
+                goal->barrier,
+                last == PETTA_PARTIAL_YES ? PETTA_JOINT_PARTIAL
+                : last == PETTA_PARTIAL_OVERAPPLIED ? PETTA_JOINT_OVERAPPLIED
+                : PETTA_JOINT_CALL,
+                NULL, NULL, ends, depth + 1u, evidence, out);
+            free(calls);
+            if (!scheduled)
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return scheduled;
+        }
+        free(calls);
+    }
+    /* The applications as written, on the head's value, as an application
+     * whose head is an expression runs: each one's arguments evaluated as a
+     * tuple, then the value applied to them (APPLY_READY).  The goals are
+     * pushed outermost first, so the innermost application runs first. */
+    Atom *results[PETTA_STAGE_CAP];
+    results[0] = value;
+    results[depth] = goal->second;
+    for (uint32_t stage = 1u; stage < depth; stage++) {
+        results[stage] = petta_fresh_variable(machine);
+        if (!results[stage]) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    for (uint32_t stage = depth; stage >= 1u; stage--) {
+        Atom *arguments = stages->expr.elems[stage];
+        CettaExprLen length = arguments->expr.len + 1u;
+        Atom **elements = cetta_expr_len_mul_fits_size(length, sizeof(Atom *))
+            ? arena_alloc(heap, sizeof(*elements) * (size_t)length) : NULL;
+        if (!elements) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        elements[0] = results[stage - 1u];
+        memcpy(elements + 1u, arguments->expr.elems,
+               sizeof(*elements) * (size_t)arguments->expr.len);
+        Atom *application = atom_expr(heap, elements, length);
+        if (!application ||
+            !petta_push_evaluated_expression_planned(
+                machine, application, results[stage],
+                PETTA_GOAL_APPLY_READY, 1u, goal->barrier, NULL)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool petta_machine_source_dynamic_call(
@@ -37511,6 +37904,15 @@ static bool petta_machine_dispatch_solve(
             machine, expression, expected);
     }
 
+    /* An application in a written head's result position, which hands on
+     * the instances its partial application leaves standing
+     * (petta_machine_try_staged_typed_call). */
+    Atom *evidence = NULL;
+    Atom *evidenced = NULL;
+    if (petta_machine_evidence_view(expression, &evidence, &evidenced))
+        return petta_machine_solve_evidenced(
+            machine, evidenced, expected, goal->barrier, evidence, failure);
+
     /*
      * Canonical PeTTa callables are values.  In particular, a lambda passed
      * as an argument must not be traversed as ordinary expression data:
@@ -37580,7 +37982,7 @@ static bool petta_machine_dispatch_solve(
         bool staged = false;
         bool scheduled = petta_machine_try_staged_typed_call(
             machine, expression, expected, goal->barrier, plan, &staged,
-            failure);
+            failure, NULL);
         if (staged)
             return scheduled;
     }
@@ -38667,6 +39069,10 @@ static bool petta_machine_dispatch_solve(
          * here would either evaluate the payload or hide PeTTa equations behind
          * the host-depth guard.
          */
+        /* The ready goal runs the match under the match's own plan, which
+         * opens a handler only when the match itself was dispatched at run
+         * time; its template keeps its own plan beside it, so a template
+         * dispatched at run time scopes only its own errors (P-ERR-3). */
         if (!direct_target && reference->kind == ATOM_EXPR) {
             Atom *ready_reference = petta_fresh_variable(machine);
             if (!ready_reference ||
@@ -38679,7 +39085,8 @@ static bool petta_machine_dispatch_solve(
                         .second = expression->expr.elems[2],
                         .third = expression->expr.elems[3],
                         .fourth = expected,
-                        .plan = petta_plan_child(plan, 3u),
+                        .plan = plan,
+                        .third_plan = petta_plan_child(plan, 3u),
                     }) ||
                 !petta_push_solve_planned(
                     machine, expression->expr.elems[1],
@@ -40167,6 +40574,9 @@ static bool petta_machine_dispatch_goal(
         return true;
     }
 
+    if (goal.kind == PETTA_GOAL_EVIDENCE_COMPLETION)
+        return petta_machine_evidence_completion(machine, &goal, failure);
+
     if (goal.kind == PETTA_GOAL_FILTERED_TAKEN) {
         bool read = goal.answer_weight ==
                 space_equation_revision(machine->space) &&
@@ -41213,8 +41623,19 @@ static bool petta_machine_dispatch_goal(
         Atom *partial = petta_semantics_partial_value(
             &machine->heap, first->expr.elems[0],
             first->expr.elems + 1u, first->expr.len - 1u);
-        return partial &&
-               petta_machine_unify(machine, partial, second);
+        if (!partial || !petta_machine_unify(machine, partial, second))
+            return false;
+        /* A partial application in a written head's result position hands
+         * on the instances it leaves standing. */
+        Atom *evidence = NULL;
+        Atom *standing = NULL;
+        if (petta_machine_evidence_view(goal.third, &evidence, &standing)) {
+            standing = petta_machine_apply_bindings(
+                machine, environment, &machine->heap, standing);
+            return standing &&
+                   petta_machine_unify(machine, evidence, standing);
+        }
+        return true;
     }
 
     /* An application with more arguments than any definition of its head
@@ -41746,7 +42167,7 @@ static bool petta_machine_dispatch_goal(
         }
         return petta_machine_start_ready_match_mode(
             machine, first, second, template, expected,
-            goal.barrier, goal.plan, goal.choice_index != 0u, failure);
+            goal.barrier, goal.third_plan, goal.choice_index != 0u, failure);
     }
 
     if (goal.kind == PETTA_GOAL_MAP_ATOM_READY) {

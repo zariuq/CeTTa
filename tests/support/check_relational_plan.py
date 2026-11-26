@@ -2,6 +2,7 @@
 """Check indexed counts through dialect, effect and continuation boundaries."""
 import argparse
 import json
+import re
 from pathlib import Path
 
 from check_chain_aggregation import counters, run
@@ -63,18 +64,30 @@ def main():
         for name, (suffix, admitted, expected) in cases.items():
             path = out / f"{name}-{language}.metta"
             path.write_text(declarations(factors) + suffix)
-            if language == "petta" and name in ("whole-variable-row", "whole-variable-batch",
-                                                "whole-variable-reduct"):
-                # PeTTa adds no bare variable: add-atom, add-atoms and
-                # add-reduct raise, as assertz does, on either path, so no
-                # count ever meets such a row.
+            if language == "petta" and name in ("whole-variable-row", "whole-variable-batch"):
+                # PeTTa adds no bare variable: add-atom and add-atoms raise
+                # the reference's (Error instantiation_error _) before they
+                # read the space, on either path, so no count ever meets
+                # such an atom.
                 for reference in (False, True):
                     refused = run(binary, language, path, reference, False,
                                   allow_incomplete=True)
                     assert refused.returncode != 0 and refused.stdout == "" and \
-                        "instantiation_error" in refused.stderr and \
-                        "(/ assertz 1)" in refused.stderr, (name, language, reference, refused)
+                        re.search(r"\(Error instantiation_error \$\w+\)\n\Z",
+                                  refused.stderr), (name, language, reference, refused)
                 records.append({"case": name, "language": language, "refused": True})
+                continue
+            if language == "petta" and name == "whole-variable-reduct":
+                # PeTTa defines add-reduct only by lib_he's equation: without
+                # that library the call is data, nothing is added, and the
+                # count is the root's on either path.
+                for reference in (False, True):
+                    data = run(binary, language, path, reference, False)
+                    lines = data.stdout.splitlines()
+                    assert len(lines) == 2 and \
+                        re.fullmatch(r"\(add-reduct &self \$\w+\)", lines[0]) and \
+                        lines[1] == str(expected_count), (name, language, reference, data)
+                records.append({"case": name, "language": language, "data": True})
                 continue
             actual = run(binary, language, path, False, args.stats)
             reference = run(binary, language, path, True, False)

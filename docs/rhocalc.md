@@ -261,12 +261,16 @@ Each operation carries a full `@doc` in `lib/lts/rho/cost.metta`.
   harness the tcalc lane shares), the `.metta` API tests
   (`tests/test_lts_rho_cost_*.metta`), rejection tests, translation
   round-trips, the canonical-selector differential, and the examples.
-* **Lean bridges** — `tests/rhocalc_cost_lean_bridge.tsv` drives the same
-  terms through this engine and the Lean cost executor;
-  `tests/rhocalc_cost_receipt_replay.lean` replays compiled-C receipts as
-  Lean derivations and rejects tampered ones. This is bounded
-  differential evidence about the compiled engine, not a universal
-  theorem about C; the theorems live on the Lean side.
+* **Causal prefixes** — `make test-rhocalc-cost-prefixes` (part of
+  `test-rhocalc`) runs the bounded causal-prefix cases and checks each
+  printed prefix against `tests/rhocalc_cost_run/causal_prefix_cases.expected`,
+  the same prefixes from four workers, and the outcome sets four workers
+  reach on competing redexes against the exhaustive step frontier.
+* **Lean alignment** (opt-in, not a test) — `make lean-alignment-rhocalc`
+  and `make lean-alignment-rhocalc-cost` (`mk/lean_alignment.mk`) run the
+  same terms through the Lean cost executor and compare, and have Lean
+  replay the receipts CeTTa printed. They compare two implementations; the
+  theorems live on the Lean side.
 * **Commit audit** — `make test-rhocalc-cost-commit-audit[-asan|-tsan]`
   rebuilds with `RHOCOST_COMMIT_AUDIT=1`, which re-derives and re-checks
   every committed parallel firing (redex shape, channel keys, contractum,

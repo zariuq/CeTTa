@@ -8516,8 +8516,7 @@ static bool dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
     Atom *payload = args[1];
     bool petta = eval_current_language_id() == CETTA_LANGUAGE_PETTA;
     if (petta && is_add && payload->kind == ATOM_VAR) {
-        *outcome = cetta_call_raised(petta_semantics_instantiation_error(
-            a, "system", "assertz", 1));
+        *outcome = cetta_call_raised(petta_semantics_unbound_atom_error(a));
         return true;
     }
     const int fuel = eval_get_default_fuel();
@@ -8547,7 +8546,8 @@ static bool dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
         target = petta_ensure_named_space(s, a, space_ref);
     if (!target) {
         *outcome = petta
-            ? cetta_call_raised(petta_semantics_space_operand_error(a, space_ref))
+            ? cetta_call_raised(petta_semantics_space_write_error(
+                  a, space_ref, payload, is_remove))
             : cetta_call_value(space_arg_error(a, call,
             is_add ? "add-atom expects a space as the first argument"
                    : "remove-atom expects a space as the first argument"));
@@ -20996,13 +20996,12 @@ static bool emit_add_atoms_from_evaluated_tuple(
         return false;
     }
     /* PeTTa adds no bare variable: each element is added as add-atom adds
-     * one, whose bare variable raises as assertz does.  The batch is refused
-     * before any element is stored. */
+     * one, which refuses an unbound atom before reading its space.  The
+     * batch is refused before any element is stored. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
         for (CettaExprIndex i = 0u; i < item_count; i++) {
             if (logical_items[i] && logical_items[i]->kind == ATOM_VAR) {
-                Atom *error = petta_semantics_instantiation_error(
-                    a, "system", "assertz", 1);
+                Atom *error = petta_semantics_unbound_atom_error(a);
                 petta_eval_raise(error);
                 outcome_set_add(os, error, &empty);
                 return true;
@@ -21014,12 +21013,12 @@ static bool emit_add_atoms_from_evaluated_tuple(
     if (!target && eval_current_language_id() == CETTA_LANGUAGE_PETTA)
         target = petta_ensure_named_space(s, a, ready_space);
     if (!target && eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        outcome_set_add(
-            os,
-            space_arg_error(
-                a, call_atom,
-                "add-atoms expects a space as the first argument"),
-            &empty);
+        /* Each atom is added as add-atom adds one: an operand that names no
+         * space raises add-atom's term for the first (P-ERR-5). */
+        Atom *error = petta_semantics_space_atom_error(
+            a, ready_space, item_count ? logical_items[0] : NULL);
+        petta_eval_raise(error);
+        outcome_set_add(os, error, &empty);
         return true;
     }
     if (!target)
@@ -27205,8 +27204,7 @@ bool eval_space_mutation_contract_kind(
         return true;
     }
     if (petta && !is_remove && payload->kind == ATOM_VAR) {
-        Atom *error = petta_semantics_instantiation_error(
-            arena, "system", "assertz", 1);
+        Atom *error = petta_semantics_unbound_atom_error(arena);
         petta_eval_raise(error);
         outcome_set_add(outcomes, error, &empty);
         return true;
@@ -27235,7 +27233,8 @@ bool eval_space_mutation_contract_kind(
         target = petta_ensure_named_space(root, arena, space_ref);
     if (!target) {
         if (petta) {
-            Atom *error = petta_semantics_space_operand_error(arena, space_ref);
+            Atom *error = petta_semantics_space_write_error(
+                arena, space_ref, payload, is_remove);
             petta_eval_raise(error);
             outcome_set_add(outcomes, error, &empty);
             return true;
@@ -34866,7 +34865,8 @@ handle_match_scheduled(Space *s, Arena *a, Atom *atom, int fuel,
                 continue;
             if (read.kind == PETTA_SPACE_READ_INVALID) {
                 Atom *error = read.location && atom_is_error(read.location)
-                    ? read.location : petta_semantics_space_operand_error(a, read.location);
+                    ? read.location
+                    : petta_semantics_space_read_error(a, read.location, pattern);
                 petta_eval_raise(error);
                 outcome_set_add(
                     os, error, &_empty);
@@ -46423,8 +46423,37 @@ static bool petta_static_import_native_try(
     }
     Atom *space_ref = expression->expr.elems[1];
     const char *file = string_like_atom(expression->expr.elems[2]);
-    if (space_ref->kind != ATOM_SYMBOL || !file)
+    if (!file)
         return true;
+    if (space_ref->kind != ATOM_SYMBOL) {
+        Space *space = resolve_space(g_registry, space_ref);
+        if (!space)
+            space = resolve_space(g_registry,
+                                  resolve_registry_refs(arena, space_ref));
+        /* A space that is no symbol, as new-space makes, stays unevaluated:
+         * the importer names its predicate by the space's printed text,
+         * which a spelled symbol would reach ([DIFF-7]). */
+        if (space)
+            return true;
+        /* One law for every space write: an operand that names no space
+         * raises add-atom's term for it, once the file is found, as the
+         * atoms of a static file are expressions (P-ERR-5). */
+        *recognized = true;
+        CettaCallOutcome found = cetta_call_failure();
+        Atom *error = NULL;
+        if (petta_libpl_static_import_source(library_context->lib_prolog,
+                                             arena, file, &found))
+            error = petta_semantics_space_name_error(arena, space_ref, true);
+        else if (found.kind == CETTA_CALL_RAISED)
+            error = found.term;
+        if (!error)
+            return false;
+        if (end)
+            *end = cetta_call_raised(error);
+        else
+            petta_eval_raise(error);
+        return true;
+    }
     *recognized = true;
     PettaStaticImportSync sync = {
         .arena = arena,
@@ -65809,6 +65838,63 @@ petta_lowered_to_shared_form:
         char first_library_candidate[PATH_MAX];
         first_library_candidate[0] = '\0';
         Atom *missing_library = NULL;
+        /* PeTTa's import! adds a document's atoms to its destination as
+         * add-atom adds one, once the document is found and read: a
+         * destination that names no space raises add-atom's term for the
+         * document's first atom, an expression (P-ERR-5), before any of the
+         * document runs.  A document that is not found, or does not read,
+         * raises its own error first. */
+        bool refused_before_loading = false;
+        if (error && language_id == CETTA_LANGUAGE_PETTA &&
+            import_dest->kind != ATOM_SYMBOL) {
+            if (has_library_reference) {
+                char found[PATH_MAX];
+                char candidate[PATH_MAX];
+                if (cetta_library_petta_resolve_reference(
+                        g_library_context, &library_reference,
+                        found, sizeof(found))) {
+                    size_t found_len = strlen(found);
+                    if (found_len < 3u ||
+                        strcmp(found + found_len - 3u, ".py") != 0) {
+                        Atom *unreadable =
+                            cetta_library_petta_document_read_error(a, found);
+                        error = unreadable
+                            ? unreadable
+                            : petta_semantics_space_name_error(
+                                  a, import_dest, true);
+                        refused_before_loading = true;
+                    }
+                } else {
+                    CettaPettaLibraryReferenceObservation observation =
+                        cetta_library_petta_reference_observe(
+                            g_library_context, &library_reference, 0u,
+                            candidate, sizeof(candidate));
+                    error = observation.kind ==
+                                CETTA_PETTA_LIBRARY_REFERENCE_REFUSED
+                        ? atom_symbol(a, observation.reason
+                                             ? observation.reason
+                                             : "library reference refused")
+                        : NULL;
+                    if (observation.kind ==
+                            CETTA_PETTA_LIBRARY_REFERENCE_YIELD)
+                        missing_library = atom_symbol(a, candidate);
+                }
+            } else {
+                Atom *source_error = NULL;
+                bool metta_document = false;
+                if (cetta_library_import_source_resolves(
+                        g_library_context, spec, a, &metta_document,
+                        &source_error)) {
+                    if (metta_document) {
+                        error = petta_semantics_space_name_error(
+                            a, import_dest, true);
+                        refused_before_loading = true;
+                    }
+                } else if (source_error) {
+                    error = source_error;
+                }
+            }
+        }
         if (!error && dest.space) {
             if (has_library_reference) {
                 for (uint32_t occurrence = 0u;; occurrence++) {
@@ -65918,7 +66004,9 @@ petta_lowered_to_shared_form:
             }
             if (active_profile_uses_rust_he_compat_semantics())
                 error = he_compat_import_reason(a, error);
-            if (language_id == CETTA_LANGUAGE_PETTA &&
+            if (refused_before_loading) {
+                petta_eval_raise(error);
+            } else if (language_id == CETTA_LANGUAGE_PETTA &&
                 !has_library_reference &&
                 cetta_library_import_error_is_missing_module(error)) {
                 /* Stable resolves an import before loading it, and reports
@@ -66551,7 +66639,10 @@ petta_lowered_to_shared_form:
     }
 
     /* ── add-reduct ────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.add_reduct && nargs == 2 && g_registry) {
+    /* HE's.  PeTTa defines add-reduct only in lib_he, so the PeTTa lane
+     * leaves the call as data until lib_he's equation is imported (P-APP-1). */
+    if (head_id == g_builtin_syms.add_reduct && nargs == 2 && g_registry &&
+        language_id != CETTA_LANGUAGE_PETTA) {
         Space **targets = NULL;
         CettaCount ntargets = 0;
         collect_resolved_spaces(s, a, expr_arg(atom, 0), fuel, &targets, &ntargets);
@@ -66565,19 +66656,6 @@ petta_lowered_to_shared_form:
             for (CettaCount ti = 0; ti < ntargets; ti++) {
                 for (CettaCount vi = 0; vi < vals.len; vi++) {
                     Atom *stored_val = outcome_atom_materialize(a, &vals.items[vi]);
-                    /* PeTTa adds no bare variable: the reduct is added as
-                     * add-atom adds it, whose bare variable raises as assertz
-                     * does. */
-                    if (language_id == CETTA_LANGUAGE_PETTA && stored_val &&
-                        stored_val->kind == ATOM_VAR) {
-                        Atom *error = petta_semantics_instantiation_error(
-                            a, "system", "assertz", 1);
-                        petta_eval_raise(error);
-                        outcome_set_add(os, error, &vals.items[vi].env);
-                        free(targets);
-                        outcome_set_free(&vals);
-                        return;
-                    }
                     Space *target = payload_resolve_space_write(targets[ti]);
                     targets[ti] = target;
                     if (!space_admit_atom(target, dst, stored_val)) {
@@ -66646,6 +66724,15 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, mork_handle_error, &_empty);
             return;
         }
+        /* get-atoms reads no view of the read algebra: its operand, as
+         * written, names no space (P-ERR-5). */
+        if (language_id == CETTA_LANGUAGE_PETTA &&
+            petta_space_expression_is_algebra(space_ref)) {
+            Atom *error = petta_semantics_space_atoms_error(a, space_ref);
+            petta_eval_raise(error);
+            outcome_set_add(os, error, &_empty);
+            return;
+        }
         if (language_id == CETTA_LANGUAGE_PETTA &&
             !(space_ref->kind == ATOM_GROUNDED &&
               space_ref->ground.gkind == GV_SPACE)) {
@@ -66664,14 +66751,13 @@ petta_lowered_to_shared_form:
                 if (read.kind == PETTA_SPACE_READ_EMPTY_LOCATION)
                     continue;
                 if (read.kind == PETTA_SPACE_READ_INVALID) {
-                    outcome_set_add(
-                        os,
-                        read.location && atom_is_error(read.location)
-                            ? read.location
-                            : space_arg_error(
-                                  a, atom,
-                                  "get-atoms expects a space as its argument"),
-                        &_empty);
+                    /* An operand that is no space raises the reference's
+                     * term (P-ERR-5). */
+                    Atom *error = read.location && atom_is_error(read.location)
+                        ? read.location
+                        : petta_semantics_space_atoms_error(a, read.location);
+                    petta_eval_raise(error);
+                    outcome_set_add(os, error, &_empty);
                     break;
                 }
                 PettaSpaceAtomSnapshot snapshot = {0};

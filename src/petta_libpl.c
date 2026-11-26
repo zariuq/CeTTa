@@ -5984,6 +5984,13 @@ static const char *const petta_libpl_static_import_clauses[] = {
     "findall(P-N-false, "
     "( member(P/N-_, Before), \\+ memberchk(P/N-_, After) ), Gone), "
     "append(Changed, Gone, Touched))",
+    "('$cetta_static_import_source'(File) :- "
+    "atom_string(File, SFile), working_dir(Base), "
+    "atomic_list_concat([Base, '/', SFile, '.qlf'], Qlf), "
+    "atomic_list_concat([Base, '/', SFile, '.pl'], Pl), "
+    "atomic_list_concat([Base, '/', SFile, '.metta'], Metta), "
+    "( exists_file(Qlf) -> true ; exists_file(Pl) -> true "
+    "; setup_call_cleanup(open(Metta, read, In), true, close(In)) ))",
     "('$cetta_static_generations'(M, Generations) :- "
     "findall(P/N-G, "
     "( current_predicate(M:P/N), functor(H, P, N), "
@@ -6527,6 +6534,65 @@ bool petta_libpl_static_import(
     g_petta_libpl_active_runtime = previous_active_runtime;
     petta_libpl_leave(claimed);
     return ok || end->kind == CETTA_CALL_RAISED;
+}
+
+bool petta_libpl_static_import_source(
+    CettaLibPrologRuntime *runtime, Arena *arena, const char *file,
+    CettaCallOutcome *end) {
+    if (end)
+        *end = cetta_call_failure();
+    if (!runtime || !arena || !file || !end)
+        return false;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    if (!petta_libpl_prepare_locked(runtime) ||
+        !petta_libpl_install_static_import(runtime)) {
+        petta_libpl_leave(claimed);
+        return false;
+    }
+    CettaLibPrologRuntime *previous_active_runtime =
+        g_petta_libpl_active_runtime;
+    g_petta_libpl_active_runtime = runtime;
+    fid_t frame = PL_open_foreign_frame();
+    term_t arguments = frame ? PL_new_term_refs(1) : 0;
+    predicate_t source = PL_predicate(
+        "$cetta_static_import_source", 1, runtime->module_name);
+    bool ok = frame && arguments && source &&
+              petta_libpl_put_utf8(arguments, PL_ATOM, file, strlen(file));
+    qid_t query = ok
+        ? PL_open_query(runtime->module, PETTA_LIBPL_QUERY_FLAGS,
+                        source, arguments)
+        : 0;
+    ok = ok && query;
+    if (ok) {
+        int status = PL_next_solution(query);
+        if (status == PL_S_EXCEPTION) {
+            term_t exception = PL_exception(query);
+            Atom *error = exception
+                ? petta_libpl_exception_value(arena, exception) : NULL;
+            if (error)
+                *end = cetta_call_raised(error);
+            ok = false;
+        } else if (status != PL_S_TRUE && status != PL_S_LAST) {
+            ok = false;
+        }
+    }
+    if (query) {
+        Atom *cleanup = NULL;
+        if (petta_libpl_release_query(arena, &cleanup, query,
+                                      PETTA_LIBPL_RELEASE_CUT) !=
+            PETTA_LIBPL_RELEASE_OK) {
+            if (cleanup)
+                *end = cetta_call_raised(cleanup);
+            ok = false;
+        }
+    }
+    if (frame)
+        PL_discard_foreign_frame(frame);
+    g_petta_libpl_active_runtime = previous_active_runtime;
+    petta_libpl_leave(claimed);
+    return ok;
 }
 
 /* The float flags and prefer_rationals as PETTA_LIBPL_FLAG_* bits, with

@@ -1,7 +1,7 @@
 claim_id	tex_line	claim_text	driver	engines	cost_class	contract
 suite_default_green	L51	CeTTa passes a 375-file regression suite with zero failures on the default build	make test	CeTTa	heavy	pass/fail/skip/no-expected counts recorded
 suite_mork_green	L51-L53	CeTTa is equally green in the MORK-bridge build	make BUILD=main test	CeTTa main/MORK bridge	heavy	pass/fail/skip/no-expected counts recorded
-he_conformance_catalog	L52-L54	333-case HE v0.2.10 conformance catalog covers 24/24 specification rule capacities	make test-he-compat-semantic-suite	CeTTa vs HE	cheap	PASS catalog cases and capacity coverage if emitted
+he_conformance_catalog	L52-L54	333-case HE v0.2.10 conformance catalog covers 24/24 specification rule capacities	make lean-alignment-he-compat-semantic-suite	CeTTa vs HE	cheap	PASS catalog cases and capacity coverage if emitted
 intro_shallow_10_100x_he	L144-L145	CeTTa is 10--100x faster than HE on shallow evaluation	aggregate of shallow_typed_bc and translator_prog1	CeTTa,PeTTa,HE	cheap	same output counts before timing counts
 intro_metamath_petta_4p8x	L147-L148	PeTTa is 4.8x faster than CeTTa on depth-5 Metamath proof-search row	scripts/bench_metamath_d5.sh	CeTTa,PeTTa,HE	heavy	85013 proofs on completing engines; HE timeout reported
 intro_8queens_petta_faster	L148-L149	PeTTa is faster than CeTTa on direct 8-Queens search	locate driver; likely benchmarks/bench_nqueens8_he.metta plus PeTTa counterpart if present	CeTTa,PeTTa,HE	heavy	92 solutions on all timing engines
@@ -9,8 +9,8 @@ shared_fragment_85_percent	L151-L153	HE/PeTTa shared fragment, 85 percent of pro
 state_gap_6_of_8	L154-L157	Mutable-state nondeterminism examples: CeTTa sequential semantics correct in 6/8 cases while HE loses atoms	NO-DRIVER	CeTTa,HE	cheap	NO-DRIVER: paper references analysis examples but no current performance driver
 symbolid_dispatch_38pct	L83	SymbolId-based dispatch gives 38 percent instruction reduction	NO-DRIVER	CeTTa	heavy	NO-DRIVER: paper names historical profiling claim without driver
 stdlib_blob_6ms_startup	L196-L198	Two-stage stdlib blob gives 6 ms startup	NO-DRIVER	CeTTa	cheap	NO-DRIVER: no explicit startup benchmark target found
-rule_capacity_24_of_24	L281-L284	333 curated cases agree and cover 24/24 spec-rule capacities	make test-he-compat-semantic-suite	CeTTa vs HE	cheap	PASS catalog and capacity coverage if emitted
-broad_corpus_378	L290-L294	Broad corpus has 378 examples: 302 agree, 59 classified differences, 7 timeouts, 10 not runnable	make test-he-compat-semantic-suite or refresh_he_runtime_matrices.py	CeTTa vs HE	heavy	counts must match emitted catalog summary
+rule_capacity_24_of_24	L281-L284	333 curated cases agree and cover 24/24 spec-rule capacities	make lean-alignment-he-compat-semantic-suite	CeTTa vs HE	cheap	PASS catalog and capacity coverage if emitted
+broad_corpus_378	L290-L294	Broad corpus has 378 examples: 302 agree, 59 classified differences, 7 timeouts, 10 not runnable	make lean-alignment-he-compat-semantic-suite or refresh_he_runtime_matrices.py	CeTTa vs HE	heavy	counts must match emitted catalog summary
 rule_pack_10_classes	L420-L437	Ten live rule classes gate one-step behavior; baseline plus ten rule-removal failures confirmed	make test-step-rules	CeTTa	cheap	expected rule-removal failures and baseline pass
 rule_cert_5_of_10	L473	Five of ten live step rules carry Lean certification	NO-DRIVER	Lean	cheap	NO-DRIVER: proof inventory, not a runtime performance claim
 translator_lean_5400_lines	L87-L89	Lean HE<->PeTTa proof is 5400+ lines and sorry-free	NO-DRIVER	Lean	cheap	NO-DRIVER for perf run; proof audit belongs to Lean tree

@@ -5,7 +5,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 BIN=$(realpath "${1:-$ROOT/cetta}")
 OUTPUT=${2:-$ROOT/runtime/ic-pln-mvp}
-SOURCE_SHA=6b980321bbe9b49e5b12e2fcee0479ab1d5c7550c2104a67b0722a5b473da4ee
+SOURCE_SHA=74febcafac3e99a280e342bc5d548e7cb0ffe697317e89a29acca48ea59a67ec
 test -x "$BIN"
 if [[ $(sha256sum "$ROOT/lib/petta/lib_pln.metta" | cut -d ' ' -f1) != "$SOURCE_SHA" ]]; then
     printf 'REFUSED: this frozen experiment requires its recorded PLN source\n' >&2
@@ -72,8 +72,8 @@ stage pack "(pln-poc:pack $(quote "$RUN/original.metta") $(quote "$RUN/A0.dec") 
 binary A0.dec A0.sic
 learn first A0 a 0 A1 4
 learn second A1 b 0 A2 1
-grep -q '"a" 2207 2186 59537 59092 2 4 RegionExhausted IC:NoFault 0)' first.stdout
-grep -q '"b" 2186 2180 59092 59059 1 1 RegionExhausted IC:NoFault 0)' second.stdout
+grep -q '"a" 2215 2194 59762 59317 2 4 RegionExhausted IC:NoFault 0)' first.stdout
+grep -q '"b" 2194 2188 59317 59284 1 1 RegionExhausted IC:NoFault 0)' second.stdout
 grep -q '^[(]PLN:Uses "ic-learned:a" 4)' second.stdout
 grep -q '^[(]PLN:Uses "ic-learned:b" 2)' second.stdout
 for artifact in A1 A2; do
@@ -84,8 +84,8 @@ done
 n0=$(awk -f count_metta_nodes.awk original.normalized.metta)
 n1=$(awk -f count_metta_nodes.awk A1.rewritten.metta)
 n2=$(awk -f count_metta_nodes.awk A2.rewritten.metta)
-test "$n0 $n1 $n2" = '2207 2186 2180'
-test "$(wc -c < A0.sic) $(wc -c < A1.sic) $(wc -c < A2.sic)" = '59537 59092 59059'
+test "$n0 $n1 $n2" = '2215 2194 2188'
+test "$(wc -c < A0.sic) $(wc -c < A1.sic) $(wc -c < A2.sic)" = '59762 59317 59284'
 for variant in original final; do
     source_file=original.normalized.metta
     [[ $variant != final ]] || source_file=A2.rewritten.metta
@@ -127,7 +127,7 @@ bash replay.sh "$RUN" > replay-check.stdout
 printf '%s\n' \
     'PASS: unchanged real PLN input; two generated features with 4 and 2 uses' \
     "Nodes: $n0 -> $n1 -> $n2" \
-    'Archive bytes (profile supplied separately): 59537 -> 59092 -> 59059' \
+    'Archive bytes (profile supplied separately): 59762 -> 59317 -> 59284' \
     'PASS: both native reconstructions and independent AWK counts' \
     'PASS: 33 public-call observations and separate fault comparison' \
     'PASS: pause/resume at both stages yields identical artifacts' \

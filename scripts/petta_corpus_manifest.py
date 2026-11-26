@@ -19,7 +19,11 @@ Every example is judged by its own law, never by another engine's bytes:
   family) passes iff every assertion it makes passes and every top-level
   ``test`` prints its verdict.  A self-check that CeTTa currently fails is kept
   with ``failing`` set to its first failing verdict; it must keep failing until
-  ``accept`` records that it passes.
+  ``accept`` records that it passes.  When CeTTa answers there as it means to,
+  differing from SWI-PeTTa, the entry also names the entry of the register of
+  differences (``tests/petta/swi_differences.metta``) that records it, as
+  ``difference``: ``DIFF-<n>``.  Such an example meets its oracle; an
+  unexplained failing self-check does not, under ``--require-match``.
 - ``golden``: any other example must reproduce ``tests/petta/golden/<stem>.stdout``,
   CeTTa's normalized stdout, refreshed by ``accept``.
 - ``negative``: an example meant to fail must exit as recorded and print the
@@ -61,6 +65,14 @@ SCHEMA = "cetta-petta-corpus-v3"
 DEFAULT_MANIFEST = REPO_ROOT / "tests" / "petta" / "corpus" / "manifest.json"
 DEFAULT_OVERLAY_DIR = REPO_ROOT / "tests" / "petta" / "overlay"
 DEFAULT_GOLDEN_DIR = REPO_ROOT / "tests" / "petta" / "golden"
+# The register of differences from SWI-PeTTa: an entry is a comment line
+# "; <n>. <text>" at the start of a line; "Retired" or "Withdrawn" text ends it.
+DEFAULT_REGISTER = (
+    REPO_ROOT / "tests" / "petta" / "swi_differences.metta",
+    REPO_ROOT / "tests" / "petta" / "swi_differences_prolog.metta",
+)
+REGISTER_ENTRY_RE = re.compile(r"; (\d+)\. (.*)")
+DIFFERENCE_RE = re.compile(r"DIFF-([1-9][0-9]*)")
 KNOWN_BASES = ("upstream", "stable-fixed")
 DEFAULT_BASE = "upstream"
 BASE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -72,7 +84,7 @@ MODE_NEGATIVE = "negative"
 MODES = (MODE_SELF_CHECK, MODE_GOLDEN, MODE_NEGATIVE)
 ENTRY_KEYS = (
     "name", "mode", "overlay", "timeout", "fixture", "requires",
-    "failing", "exit", "failure", "observation",
+    "failing", "difference", "exit", "failure", "observation",
 )
 
 STDOUT_EXACT_STREAM = "exact-stream"
@@ -1093,10 +1105,25 @@ ABNORMAL_FIXTURE = "fixture-failure"
 PREFIX_SEEN = "supervised-prefix"
 
 
+LOCALE_CATEGORIES = (
+    "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE", "LC_MONETARY",
+    "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE",
+    "LC_MEASUREMENT", "LC_IDENTIFICATION",
+)
+
+
 def fixture_environment(
     repo_root: Path, fixture: dict[str, Any] | None
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    # The examples' oracles spell dates in the C locale's words ("Saturday"),
+    # so an example's time locale is C on every machine; LC_ALL would
+    # override it, so its value moves to each other category instead.
+    every = environment.pop("LC_ALL", "")
+    if every:
+        for category in LOCALE_CATEGORIES:
+            environment[category] = every
+    environment["LC_TIME"] = "C"
     if fixture and fixture.get("python_files"):
         python_dir = repo_root / "tests" / "petta" / "fixtures" / "python"
         prior = environment.get("PYTHONPATH")
@@ -1519,12 +1546,15 @@ def first_difference(expected: str, actual: str) -> str:
 
 
 class Verdict(NamedTuple):
-    status: str  # PASS, XFAIL (a recorded failing self-check), or FAIL
+    # PASS; DIFF, a recorded difference from SWI-PeTTa (a failing self-check
+    # the register explains); XFAIL, an unexplained recorded failing
+    # self-check; or FAIL.
+    status: str
     detail: str
 
     @property
     def matches(self) -> bool:
-        return self.status in {"PASS", "XFAIL"}
+        return self.status in {"PASS", "DIFF", "XFAIL"}
 
 
 def judge(
@@ -1549,6 +1579,8 @@ def judge(
         _, assertion_failures = assertion_verdicts(run.stdout)
         if assertion_failures and run.exit != 1:
             return Verdict("FAIL", f"assertion failure terminated with exit {run.exit}, expected 1")
+        if entry.get("difference"):
+            return Verdict("DIFF", f"{entry['difference']}: {detail}")
         return Verdict("XFAIL", detail)
     if mode == MODE_NEGATIVE:
         expected_exit = entry["exit"]
@@ -1668,6 +1700,15 @@ def entry_shape_problems(entry: Any) -> list[str]:
         mode != MODE_SELF_CHECK or not isinstance(failing, str) or not failing
     ):
         problems.append(f"{name}: failing is a non-empty line of a self-check")
+    difference = entry.get("difference")
+    if difference is not None and (
+        failing is None or not isinstance(difference, str)
+        or not DIFFERENCE_RE.fullmatch(difference)
+    ):
+        problems.append(
+            f"{name}: difference is DIFF-<n>, the register entry that "
+            "explains a failing self-check"
+        )
     if mode == MODE_NEGATIVE:
         if (
             isinstance(entry.get("exit"), bool)
@@ -1702,6 +1743,22 @@ def entry_shape_problems(entry: Any) -> list[str]:
     return problems
 
 
+def register_entries(register: tuple[Path, ...]) -> dict[int, bool]:
+    """The register's entries: number -> whether the entry is in force (an
+    entry whose text begins "Retired" or "Withdrawn" is not)."""
+    entries: dict[int, bool] = {}
+    for path in register:
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = REGISTER_ENTRY_RE.match(line)
+            if match:
+                number = int(match.group(1))
+                in_force = not match.group(2).startswith(("Retired", "Withdrawn"))
+                entries[number] = entries.get(number, False) or in_force
+    return entries
+
+
 class CorpusCheck(NamedTuple):
     manifest: dict[str, Any]
     overlays: dict[str, Overlay]
@@ -1716,6 +1773,7 @@ def check_corpus(
     overlay_dir: Path,
     golden_dir: Path,
     require_complete: bool,
+    register: tuple[Path, ...] = DEFAULT_REGISTER,
 ) -> CorpusCheck:
     """Everything that can be checked without running an example."""
     manifest = load_manifest(manifest_path)
@@ -1743,6 +1801,15 @@ def check_corpus(
         raise RuntimeError("PeTTa corpus manifest entries are not name-sorted")
     if len(set(names)) != len(names):
         raise RuntimeError("PeTTa corpus manifest contains duplicate names")
+    if any(entry.get("difference") for entry in entries):
+        recorded = register_entries(register)
+        for entry in entries:
+            difference = entry.get("difference")
+            if difference and not recorded.get(int(difference[len("DIFF-"):])):
+                problems.append(
+                    f"{entry['name']}: {difference} is not an entry in force "
+                    "in the register of differences"
+                )
 
     branch, commit = git_head(petta_dir)
     if commit is not None and commit != base_commit:
@@ -1820,10 +1887,12 @@ def verify_manifest(
     require_complete: bool,
     overlay_dir: Path = DEFAULT_OVERLAY_DIR,
     golden_dir: Path = DEFAULT_GOLDEN_DIR,
+    register: tuple[Path, ...] = DEFAULT_REGISTER,
 ) -> CorpusCheck:
     """Static check of the corpus against the base; raises on any problem."""
     check = check_corpus(
-        petta_dir, manifest_path, overlay_dir, golden_dir, require_complete
+        petta_dir, manifest_path, overlay_dir, golden_dir, require_complete,
+        register,
     )
     for notice in check.notices:
         print(f"NOTE: {notice}")
@@ -1838,11 +1907,13 @@ def verify_manifest(
         )
     entries = check.manifest["entries"]
     counts = Counter(entry["mode"] for entry in entries)
+    differences = sum(1 for entry in entries if entry.get("difference"))
     print(
         f"PASS: PeTTa corpus manifest is consistent with its base "
         f"({len(entries)} examples: "
         + ", ".join(f"{counts[mode]} {mode}" for mode in MODES)
-        + f"; {len(check.overlays)} overlay(s))"
+        + f"; {len(check.overlays)} overlay(s); {differences} recorded "
+        "difference(s) from SWI-PeTTa)"
     )
     return check
 
@@ -1915,12 +1986,14 @@ def compare_manifest(
     require_match: bool,
     overlay_dir: Path = DEFAULT_OVERLAY_DIR,
     golden_dir: Path = DEFAULT_GOLDEN_DIR,
+    register: tuple[Path, ...] = DEFAULT_REGISTER,
 ) -> dict[str, Any]:
     """Run the corpus on CeTTa and judge every example by its own oracle."""
     if not cetta.is_file():
         raise RuntimeError(f"CeTTa binary does not exist: {cetta}")
     check = check_corpus(
-        petta_dir, manifest_path, overlay_dir, golden_dir, require_complete
+        petta_dir, manifest_path, overlay_dir, golden_dir, require_complete,
+        register,
     )
     for notice in check.notices:
         print(f"NOTE: {notice}")
@@ -1936,6 +2009,7 @@ def compare_manifest(
     rows = ["example\tmode\tstatus\texit\tseconds\tdetail"]
     counts: Counter[str] = Counter()
     failures: list[str] = []
+    differences: list[str] = []
     for problem in check.problems:
         counts["FAIL"] += 1
         failures.append(f"corpus: {problem}")
@@ -1969,6 +2043,8 @@ def compare_manifest(
         counts[verdict.status] += 1
         if not verdict.matches or (require_match and verdict.status == "XFAIL"):
             failures.append(f"{name}: {verdict.detail}")
+        if verdict.status == "DIFF":
+            differences.append(f"{name}: {verdict.detail}")
         exit_text = "-" if run is None else str(run.exit)
         seconds = "-" if run is None else f"{run.seconds:.3f}"
         rows.append(
@@ -1988,6 +2064,7 @@ def compare_manifest(
         "cetta": binary,
         "counts": dict(sorted(counts.items())),
         "failures": failures,
+        "recorded_differences": differences,
         "excluded_capabilities": sorted(excluded_capabilities),
         "excluded_examples": excluded_names,
         "selected": len(entries),
@@ -1998,6 +2075,8 @@ def compare_manifest(
     for name in excluded_names:
         print(f"SKIP: {name} (requires {', '.join(CASE_CAPABILITY_REQUIREMENTS[name])})")
     print(json.dumps(summary["counts"], sort_keys=True))
+    for difference in differences:
+        print(f"recorded difference from SWI-PeTTa: {difference}")
     if failures:
         print(f"{len(failures)} example(s) do not meet their oracle:")
         for failure in failures:
@@ -2011,6 +2090,7 @@ def compare_manifest(
         print(
             f"PASS: {len(entries)} PeTTa corpus example(s) meet their "
             f"oracles on CeTTa ({counts['PASS']} pass, "
+            f"{counts['DIFF']} recorded difference(s) from SWI-PeTTa, "
             f"{counts['XFAIL']} recorded failing self-check(s))"
         )
     return summary
@@ -2199,6 +2279,10 @@ def refresh_corpus(
                     passed, detail = self_check_outcome(run, run_timeout)
                     if not passed:
                         entry["failing"] = detail
+                # A recorded difference stays recorded while the example
+                # still fails; the diff below shows its verdict.
+                if "failing" in entry and old.get("difference"):
+                    entry["difference"] = old["difference"]
             else:
                 entry["mode"] = MODE_GOLDEN
                 if old.get("observation"):
@@ -2247,7 +2331,9 @@ def refresh_corpus(
         status = "not run (requires " + ", ".join(skipped_for) + ")" if (
             skipped_for
         ) else ("not run (stale overlay)" if stale_overlay else entry["mode"])
-        if entry.get("failing"):
+        if entry.get("difference"):
+            status += f" DIFFERS ({entry['difference']}): {entry['failing']}"
+        elif entry.get("failing"):
             status += f" FAILING: {entry['failing']}"
         print(f"[{index:03d}/{len(examples):03d}] {name}: {status}", flush=True)
         if not old:
@@ -2295,18 +2381,24 @@ def refresh_corpus(
         sys.stdout.write(diff)
     print("== summary ==")
     counts = Counter(entry["mode"] for entry in entries)
-    failing = [entry["name"] for entry in entries if entry.get("failing")]
+    differing = [entry for entry in entries if entry.get("difference")]
+    failing = [entry for entry in entries
+               if entry.get("failing") and not entry.get("difference")]
     print(
         f"base {base_label}; {len(entries)} examples: "
         + ", ".join(f"{counts[mode]} {mode}" for mode in MODES)
         + f"; {len(active)} active overlay(s); "
+        f"{len(differing)} recorded difference(s) from SWI-PeTTa; "
         f"{len(failing)} failing self-check(s)"
     )
     print(f"CeTTa {binary_record(cetta)['sha256'][:16]}")
     for line in report + changes:
         print(line)
-    for name in failing:
-        print(f"failing self-check: {name}: {next(e for e in entries if e['name'] == name)['failing']}")
+    for entry in differing:
+        print(f"recorded difference from SWI-PeTTa: {entry['name']} "
+              f"({entry['difference']}): {entry['failing']}")
+    for entry in failing:
+        print(f"failing self-check: {entry['name']}: {entry['failing']}")
     for problem in stale:
         print(f"STALE OVERLAY: {problem}")
     for problem in unresolved:

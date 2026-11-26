@@ -68,28 +68,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def mettapedia_root_from_environment() -> Path:
-    configured = os.environ.get("METTAPEDIA_ROOT", "")
-    if not configured:
-        raise ReadinessModelError(
-            "set METTAPEDIA_ROOT to the Lean project root"
-        )
-    root = Path(configured).expanduser().resolve()
-    if not root.is_dir() or not any(
-        (root / name).is_file() for name in ("lakefile.toml", "lakefile.lean")
-    ):
-        raise ReadinessModelError("METTAPEDIA_ROOT is not a Lean project root")
-    return root
-
-
-def current_subject(
-    root: Path, mettapedia_root: Path
-) -> tuple[dict[str, Any], str, int]:
+def current_subject(root: Path) -> tuple[dict[str, Any], str, int]:
     manifest = load_property_manifest(root / PROPERTY_MANIFEST)
     anchors = resolve_source_anchors(root, manifest)
-    artifact = artifact_identity(
-        root, mettapedia_root, "routine", manifest, anchors
-    )
+    artifact = artifact_identity(root, "routine", manifest, anchors)
     subject = calibration_subject(artifact)
     return subject, evidence_key(subject), manifest["qualification_runs_required"]
 
@@ -357,10 +339,7 @@ def main() -> int:
         return 2
     root = Path(__file__).resolve().parent.parent
     try:
-        mettapedia_root = mettapedia_root_from_environment()
-        subject, subject_key, required_runs = current_subject(
-            root, mettapedia_root
-        )
+        subject, subject_key, required_runs = current_subject(root)
         ledger_path = calibration_ledger_path(root, subject_key)
         ledger = load_ledger(
             ledger_path,
@@ -403,7 +382,6 @@ def main() -> int:
         return 1
 
     environment = os.environ.copy()
-    environment["METTAPEDIA_ROOT"] = str(mettapedia_root)
     new_pairs = 0
     while not verdict["qualified"]:
         if (
@@ -418,9 +396,7 @@ def main() -> int:
             routine = run_gate(
                 root, "routine", environment, logs / "routine.log"
             )
-            subject_after_routine, key_after_routine, _ = current_subject(
-                root, mettapedia_root
-            )
+            subject_after_routine, key_after_routine, _ = current_subject(root)
             if key_after_routine != subject_key or subject_after_routine != subject:
                 raise ReadinessModelError(
                     "source or dependency changed between calibration tiers"
@@ -433,9 +409,7 @@ def main() -> int:
                 routine["evidence"],
                 routine["summary_sha256"],
             )
-            subject_after_pair, key_after_pair, _ = current_subject(
-                root, mettapedia_root
-            )
+            subject_after_pair, key_after_pair, _ = current_subject(root)
             if key_after_pair != subject_key or subject_after_pair != subject:
                 raise ReadinessModelError(
                     "source or dependency changed during the calibration pair"

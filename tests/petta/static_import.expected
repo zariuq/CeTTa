@@ -26,3 +26,8 @@ true
 true
 caught
 caught
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, facts others)) (context (: system (/ =.. 2)) $V0))
+(Error instantiation_error (context (: system (/ =.. 2)) $V0))
+file-missing
+((a b) (a b) (b c) (c d))

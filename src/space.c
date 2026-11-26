@@ -20991,10 +20991,10 @@ static __attribute__((noinline)) bool space_dependencies_annotated_types(
     return ok;
 }
 
-static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
-                                    Atom ***out_types,
-                                    CettaTypeInferenceBudget *budget,
-                                    SpaceDeclaredTypeLookupCost *cost) {
+static uint32_t get_annotated_types_reading(
+        Space *s, Arena *a, Atom *atom, Atom ***out_types,
+        CettaTypeInferenceBudget *budget, SpaceDeclaredTypeLookupCost *cost,
+        bool match_schematic_subjects) {
     Atom *const *grounded = NULL;
     uint32_t grounded_count = atom && atom->kind == ATOM_SYMBOL
         ? space_grounded_types(atom->sym_id, &grounded) : 0u;
@@ -21026,7 +21026,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     /* A module space answers its own declarations, then each imported
        module's own, in import order (HE's ModuleSpace query). */
     SpaceAnnotatedTypes list = {
-        .match_schematic_subjects = space_effect_language() != CETTA_LANGUAGE_PETTA,
+        .match_schematic_subjects = match_schematic_subjects,
     };
     bool ok = space_member_annotated_types(
         s, a, atom, &list, budget, cost, false);
@@ -21048,10 +21048,32 @@ allocation_failed:
     return 0u;
 }
 
+static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    CettaTypeInferenceBudget *budget,
+                                    SpaceDeclaredTypeLookupCost *cost) {
+    return get_annotated_types_reading(
+        s, a, atom, out_types, budget, cost,
+        space_effect_language() != CETTA_LANGUAGE_PETTA);
+}
+
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types) {
     return space_get_declared_types_costed(
         s, a, subject, out_types, NULL);
+}
+
+uint32_t space_get_subject_declared_types(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types) {
+    if (!out_types)
+        return 0u;
+    *out_types = NULL;
+    if (!s || !a || !subject)
+        return 0u;
+    return get_annotated_types_reading(
+        s, a, subject, out_types, NULL, NULL,
+        space_effect_language() != CETTA_LANGUAGE_PETTA ||
+            !atom_has_vars(subject));
 }
 
 uint32_t space_get_declared_types_costed(

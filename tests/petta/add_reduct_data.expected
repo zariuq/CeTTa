@@ -1,0 +1,12 @@
+(add-reduct &self 3)
+(add-reduct &reducts false)
+((add-reduct &reducts 1) (add-reduct &reducts 2))
+()
+(add-reduct &reducts item)
+Symbol
+true
+true
+((42))
+true
+((3))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))

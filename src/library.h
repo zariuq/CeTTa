@@ -416,6 +416,22 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Arena *persistent_arena, Registry *registry,
                                  int fuel, Space **module_space_out,
                                  Atom **error_out);
+/* Whether `spec` names a module cetta_library_import_module would read,
+ * found as that import finds it, without running it; `*metta_document_out`
+ * says whether it is a MeTTa document, whose atoms the import adds to its
+ * space.  When it is not found, `*error_out` is the import's error; in the
+ * PeTTa lane a document found but unreadable is not resolved either, and
+ * `*error_out` is the reference's syntax error for it (P-ERR-5), since PeTTa
+ * reads a whole document before it runs or adds any of it. */
+bool cetta_library_import_source_resolves(CettaLibraryContext *ctx,
+                                          const char *spec,
+                                          Arena *eval_arena,
+                                          bool *metta_document_out,
+                                          Atom **error_out);
+/* The reference's syntax error for the PeTTa document at `path` when it
+ * cannot be read (petta_semantics_document_syntax_error); NULL when it
+ * reads, or cannot be opened. */
+Atom *cetta_library_petta_document_read_error(Arena *arena, const char *path);
 /* Whether `error`, as cetta_library_import_module reports a failure, says
  * that no file answers the requested module. */
 bool cetta_library_import_error_is_missing_module(Atom *error);

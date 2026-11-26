@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native module ingress with independently authored Lean fixtures."""
+"""Compare native module ingress with the reference module data in tests/module_portable."""
 import argparse
 import subprocess
 from pathlib import Path

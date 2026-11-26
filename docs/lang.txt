@@ -219,19 +219,25 @@ Build and verification
 
     make BUILD=core
     make test-lang-chr test-lang-chr-reference
+    make test-lang-library test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
+
+The Datalog provider is built from Lean preparation functions in a Mettapedia
+checkout, outside the tests; once it is built, its checks run:
+
     make build-lang-compilers METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
     make test-lang-library-datalog test-lang-datalog-reference SOUFFLE=PATH_TO_SOUFFLE
-    make test-lang-library test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
+    make lean-lang-provider-coexistence METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
 
 The CHR package needs no build step. test-lang-chr-reference compares its
 results with SWI-Prolog library(chr) and needs swipl: on the standard
 examples, on the controls, and on seeded generated programs whose outcomes
 depend on rule and partner order. Package files that CeTTa ships but does not
 author are listed with their source and SHA-256 in langdef/lang/manifest.json;
-test-lang-chr checks those hashes, and check-lang-package-regeneration
-METTAPEDIA_ROOT=PATH regenerates the files from a Mettapedia checkout and
-compares them. The Datalog provider is compiled once from the Lean preparation
-functions. Ordinary lang calls load native code or MeTTa in process; they do
+test-lang-chr checks those hashes and needs no Mettapedia checkout;
+check-lang-package-regeneration METTAPEDIA_ROOT=PATH, outside the tests,
+regenerates the files from a Mettapedia checkout and compares them.
+lean-lang-provider-coexistence builds a custom Datalog provider and loads it
+beside the packaged CHR provider in both orders. Ordinary lang calls load native code or MeTTa in process; they do
 not launch Python, Lean or SWI.
 Datalog inference still runs through the shared emitted MeTTa reference route.
 Native join/saturation acceleration requires a separately justified lowering.

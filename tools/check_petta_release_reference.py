@@ -200,6 +200,18 @@ def check_default(binary):
                 0, rename_generated_space_names(expected), ''):
             raise ValueError(('combinatorics adaptation changed', language,
                               run.returncode, run.stdout, run.stderr))
+    # The reference's lib_pln guards its consistency checks' divisions with
+    # `and`, which evaluates both operands, so a probability of 0 divided by
+    # zero; the adapted copy guards them with `if`.  Check the zero cases and
+    # that answers away from zero are the reference library's.
+    source = ROOT / 'tests/petta/language_versions/pln_contract.metta'
+    expected = source.with_suffix('.expected').read_text()
+    for language in ('petta', 'petta@stable-fixed'):
+        run = subprocess.run([str(binary), '--lang', language, str(source)],
+                             capture_output=True, text=True, timeout=30)
+        if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
+            raise ValueError(('lib_pln adaptation changed', language,
+                              run.returncode, run.stdout, run.stderr))
 
 
 def main():

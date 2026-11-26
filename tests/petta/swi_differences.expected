@@ -41,6 +41,12 @@ true
 true
 true
 (a)
+(reading-called 1)
+(reading-called 1)
+(reading-called 2)
+(reading-called 3)
+(reading-called 4)
+(reading-called 5)
 1.0
 1.0
 1.0
@@ -50,3 +56,9 @@ true
 -0.0
 0
 -0.0
+(Error (type_error atom ()) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom ()) (context (: system (/ =.. 2)) $V0))
+(Error (type_error predicate_indicator (/ () $V0)) (context (: system (/ current_predicate 1)) $V1))
+(Error (type_error atom ()) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (, &a &b)) (context (: system (/ =.. 2)) $V0))

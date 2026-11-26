@@ -1,0 +1,19 @@
+(import-ran queries-only)
+(import-ran queries-first)
+(Error (syntax_error missing ')', starting at line 1:
+fact 1) (context tests/petta/lib/import_unclosed.metta while loading MeTTa file))
+(Error (syntax_error expected '(' or '!(', line 2:
+)) (context tests/petta/lib/import_stray_close.metta while loading MeTTa file))
+(Error (syntax_error missing ')', starting at line 2:
+unclosed 2) (context tests/petta/lib/import_comment_lines.metta while loading MeTTa file))
+(Error (syntax_error missing ')', starting at line 1:
+fact 1) (context tests/petta/lib/import_unclosed.metta while loading MeTTa file))
+true
+true
+()
+(Error (type_error atom 42) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom (foo bar)) (context (: system (/ =.. 2)) $V0))
+(Error (type_error atom "str") (context (: system (/ =.. 2)) $V0))
+()
+true
+(1)

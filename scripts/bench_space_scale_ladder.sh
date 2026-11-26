@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The evidence's numbers are read back by machine: print them the same way in
+# every locale (a decimal comma would not parse).
+export LC_NUMERIC=C
+[ -z "${LC_ALL:-}" ] || export LC_ALL=C
+
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_SCRIPT="${CETTA_BENCH_BACKEND_SCRIPT:-$ROOT/scripts/bench_space_backend_matrix.sh}"
 TRANSFER_SCRIPT="${CETTA_BENCH_TRANSFER_SCRIPT:-$ROOT/scripts/bench_space_transfer_matrix.sh}"

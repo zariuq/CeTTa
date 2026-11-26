@@ -54,8 +54,8 @@
  * .rho / .mrho text (rhocalc_syntax.c), and the CLI (main.c;
  * `--lang rhocalc [--profile cost] [--num-threads N]`).  Tests live in
  * tests/test_lts_rho_cost_*.metta, tests/rhocalc_run/, and
- * tests/rhocalc_cost_run/; a differential harness replays compiled-C
- * receipts as Lean derivations.  The design commitments — located funding,
+ * tests/rhocalc_cost_run/, whose causal_prefix_cases.expected records the
+ * bounded causal prefixes.  The design commitments — located funding,
  * causality from consumption, exact receipts with lossy valuations derived
  * afterward — follow the cost-accounting programme for the reflective
  * higher-order calculus; the companion papers state the theory.
@@ -9104,7 +9104,7 @@ static bool rhocost_parallel_task_redex_valid(
     if (!demand || recv.kind != RHO_RECV || recv.nargs != 3u ||
         !recv.args[1] || recv.args[1]->kind != ATOM_VAR ||
         send.kind != RHO_SEND || send.nargs != 2u ||
-        recv.args[1]->var_id != task->plan.recv_binder ||
+        !var_id_eq(recv.args[1]->var_id, task->plan.recv_binder) ||
         !atom_eq(recv.args[2], task->plan.recv_body) ||
         !atom_eq(send.args[1], task->plan.send_payload) ||
         !atom_eq(rhocost_normalize_signature(arena, task->plan.consumed_sig),

@@ -1,0 +1,9 @@
+# name	fixture	expected_count	mode	expected_file
+core-comm	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected
+comm-par-chain	tests/rhocalc/comm_par_chain_h1.mrho	1	exact-one-step-match-file	tests/rhocalc/comm_par_chain_h1.expected
+literal-drop-static	tests/rhocalc/literal_drop_quote_static_after_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/literal_drop_quote_static_after_comm.expected
+quote-opacity	tests/rhocalc/quote_substitution_opaque_h7.mrho	1	exact-one-step-match-file	tests/rhocalc/quote_substitution_opaque_h7.expected
+quote-drop-whole-name	tests/rhocalc/quote_drop_whole_name_substitution_h7.mrho	1	exact-one-step-match-file	tests/rhocalc/quote_drop_whole_name_substitution_h7.expected
+quote-drop-whole-name-drop	tests/rhocalc/quote_drop_whole_name_drop_comm_h7.mrho	1	exact-one-step-match-file	tests/rhocalc/quote_drop_whole_name_drop_comm_h7.expected
+quiescent-nil	tests/rhocalc_run/quiescent_nil_core.mrho	0	exact-one-step-empty	-
+free-drop-stuck	tests/rhocalc/free_drop_is_stuck_h4.mrho	0	exact-one-step-empty	-

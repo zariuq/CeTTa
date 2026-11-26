@@ -4,8 +4,8 @@
   "reference_repository": "https://github.com/godelclaw/PeTTa",
   "reference_branch": "stable-fixed",
   "last_alignment": {
-    "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d",
-    "date": "2026-11-19",
+    "commit": "e4e345fb43e60e2f93b420b566c440bae461833f",
+    "date": "2026-11-26",
     "swi_prolog": "10.1.21-65-g34f4339 (SWI-Prolog main-fixed)"
   },
   "upstream_base": {
@@ -17,95 +17,95 @@
   "library_files": {
     "lib_builtin_types.metta": {
       "sha256": "d1d5b7462aa9336f4a88d79762a23e9295ef1fb7b24f016e33c40ce37b41b443",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_combinatorics.metta": {
       "sha256": "aca0a188210050d7db0539e59361bea85040368331fa63f35b6485daf763e428",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_datastructures.metta": {
       "sha256": "728d98a4367ce8e42739d08cecb49672a543cfea6b1e2bf51c7fdd0c619917d9",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_datetime.metta": {
       "sha256": "990f61367051bc69273d9a57a6ba197f4c23bde82e3c51229e2f007f0f85979c",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_datetime.pl": {
       "sha256": "097f00a01450cba70c6ea262b61d6510b85ab0e6a2fb8f2b177697edfc3d462f",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_he.metta": {
       "sha256": "794854f874bda8f4f55d419b0d423d66569b3099eb71489eef1b7d7b5390e41b",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_import.metta": {
       "sha256": "609731cade81b0dc1aa749f3360a76d354d11d1d333c851785ab8aaf420d3f68",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_import.pl": {
       "sha256": "0ab7b063d0287843fe4a2eb848eafc3a81cb365cdb9ea3c31ff7d2ba2578d86b",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_llm.metta": {
       "sha256": "1c9b3272b800b4a6ebadb292d9ee149af60e5f1427d31193f8487d1d23e02ad7",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_llm.py": {
       "sha256": "cbdeef7260308604acf0185e896e1d4268e57abeab250e37c09fc5a97139d273",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_measure.metta": {
       "sha256": "2dded7393743cdecbd21327bd7407614a4efcbe6f085a0ed218377c31ed0b411",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_memo.metta": {
       "sha256": "dfba3fb47b17d353f879b4205d331430a4a97200bc16ed9bece1556f24ae9d40",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_memo.pl": {
-      "sha256": "29de8ca5c8f35eba6eff6132855b0b6152c175d314346f1ceffb3d6e3172d536",
-      "commit": "e1db30d56854f081fd3bd1d2cb4b524c49f46dd3"
+      "sha256": "b340c1a43cd730bbff081b7cea9940b21aeef66535bbb31340356389e9443a7b",
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_mm2.metta": {
       "sha256": "5683ee6cec7780acd2eb80d7a989075a630d7f8a0ac611b515ef3852f6f4ce95",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_nars.metta": {
       "sha256": "f2a1ab3be59c59128894367a2f52a12c0fafdf1fb26b4affedd48270b47d4b43",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_patrick.metta": {
       "sha256": "ca09ac3dd854b054f5a7c4ce23d570d8356cfbe44e9b942d073ff8512fc73ff7",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_pln.metta": {
-      "sha256": "6b980321bbe9b49e5b12e2fcee0479ab1d5c7550c2104a67b0722a5b473da4ee",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "sha256": "d08ef08fbc8042dc1f53a7f66d19c22803479d1904c0592772d32b9d641fe7be",
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_roman.metta": {
       "sha256": "fa5451258506822d9c46a604392111153535b29a2cb5b1f17e7efc9bf8eb6160",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_spaces.metta": {
       "sha256": "b61dd3cd25e89e63382119721007d8322f46eac6d04a3392bc040bae0471e054",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_tabling.metta": {
       "sha256": "4b707f61b1466e78a80faef8d2507d0ef1e128b20dd0e4edd5e5fe9a7fda328d",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_vector.metta": {
       "sha256": "f049a0f65cddc6ec1edb959f15d64d24a580886b7ef3984c79243166f5a34aee",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_zar.metta": {
       "sha256": "e19d0f5d1b8938efb0a95523d7eca8282211d92da71b545e30da429231dee29c",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     },
     "lib_zar.pl": {
       "sha256": "d2e160b3cfb447dfe33b014e39b39321cdba26b08d2aee026b305b13c2b4d6d1",
-      "commit": "9e8fbb635d158d142a074e797fe11849f3b2423d"
+      "commit": "e4e345fb43e60e2f93b420b566c440bae461833f"
     }
   },
   "library_adaptations": {
@@ -114,6 +114,7 @@
     "lib_import.metta": "804bb2bc4af7c8b4889be5d71f3cff378444c1ee5b60b4dd3ddb72f9558757a6",
     "lib_llm.metta": "fafeb4e40e7e06d73ac04827c315b3947c0aa38cd9e5e4865dd11ede33e0695a",
     "lib_memo.metta": "5c045f4c029e041aba98b2719914e7084c60a8357c703f31306460095b69ffc4",
+    "lib_pln.metta": "74febcafac3e99a280e342bc5d548e7cb0ffe697317e89a29acca48ea59a67ec",
     "lib_roman.metta": "03affb05b6f9b7c0715c3b1b9f37607fbf15c5a61d273292dc8d19456bc1218b",
     "lib_spaces.metta": "d7dbd3b54389d93c0eee7042fe434b5d6dfd14cf2caaae9afd3ea0a9b3df4c17",
     "lib_tabling.metta": "85fc944e4edb69c651b48f150e781db418fd326e0d164451c3c19a026664ef4d"

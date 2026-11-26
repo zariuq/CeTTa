@@ -364,8 +364,9 @@ The wrapper composes executed authored projection, admission and denotation
 transformations. It is not itself a generated phase controller. The native
 parser is the existing C GLL implementation, with GLR as an evidence sibling.
 The selected NativeType-guided scalar lowering is installed and exercised by
-test-plain-bnf-typed-admission-v1. This does not imply a whole-backend
-correctness theorem or linear time for arbitrary grammars. The selected core
+lean-alignment-plain-bnf-typed-admission-v1, a Lean alignment tool outside the
+tests. This does not imply a whole-backend correctness theorem or linear time
+for arbitrary grammars. The selected core
 runtime build now uses native packaging for all nine shared language
 descriptors that previously required Python. This preserves their existing
 CGP1/source payloads; BNF does not acquire a CGP1 execution stage. The native

@@ -427,6 +427,23 @@ bool petta_semantics_contract_error(Atom *error);
 /* PeTTa 1.1's error for an import no file answers:
  * existence_error(source_sink, File) in context(import!, File). */
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);
+/* Whether one form of a document reads as sread reads it. */
+typedef bool (*PettaDocumentFormReads)(void *context, const char *form,
+                                       size_t length);
+/* What import! raises for a document it cannot read, as the reference's
+ * loader reads one (src/filereader.pl): comments stripped (outside a string,
+ * a comment goes with its line end), then each form taken from "(" or "!("
+ * to the ")" that balances it outside strings, on the line counted through
+ * the blanks before it; the first form it cannot take gives
+ * syntax_error("expected '(' or '!(', line N:\nRest") or
+ * syntax_error("missing ')', starting at line N:\nRest"), Rest the rest of
+ * that line; then every form is read in order (READS) and the first that does
+ * not read gives syntax_error("Parse error in form: Form").  The context
+ * names the file: context(PATH, 'while loading MeTTa file').  NULL when every
+ * form reads. */
+Atom *petta_semantics_document_syntax_error(
+    Arena *arena, const char *bytes, size_t length, const char *path,
+    PettaDocumentFormReads reads, void *context);
 Atom *petta_semantics_arithmetic_operand_error(Arena *arena, Atom *value);
 /* The message the reference prints for an uncaught error of its typecheck
  * vocabulary ("Type mismatch: got V but expected T", "No matching typed
@@ -453,7 +470,41 @@ Atom *petta_semantics_instantiation_error(
 /* Public removal needs a bound atom and, for an equation, a bound function
  * name. Other variables in a removal pattern remain valid selectors. */
 Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern);
-Atom *petta_semantics_space_operand_error(Arena *arena, Atom *location);
+/* instantiation_error with no context: the reference's refusal of an
+ * unbound atom to add or remove, before it reads the space (add_sexp/2,
+ * remove_sexp/3). */
+Atom *petta_semantics_unbound_atom_error(Arena *arena);
+/* What a space operation raises when its operand LOCATION is no space, for
+ * the atom ATOM it stores, removes or matches: (type_error atom LOCATION),
+ * or instantiation_error when LOCATION is unbound, in =../2's context when
+ * ATOM is a nonempty expression, which the reference keeps under a predicate
+ * named after the space and the expression's head symbol, and in none
+ * otherwise, where must_be/2 checks the space's name (src/spaces.pl). */
+Atom *petta_semantics_space_atom_error(Arena *arena, Atom *location,
+                                       const Atom *atom);
+/* The same term for an atom known only by whether it is a nonempty
+ * expression, as every atom of a document import! reads is. */
+Atom *petta_semantics_space_name_error(Arena *arena, Atom *location,
+                                       bool nonempty_expression);
+/* A write's: an unbound atom, and for a removal an unbound atom or an
+ * equation whose function name is unbound, is refused before the operand is
+ * read (petta_semantics_unbound_atom_error,
+ * petta_semantics_remove_pattern_error); any other atom raises its
+ * petta_semantics_space_atom_error. */
+Atom *petta_semantics_space_write_error(Arena *arena, Atom *location,
+                                        Atom *atom, bool removal);
+/* get-atoms': the reference finds a space's predicates with
+ * current_predicate/1, which refuses LOCATION/Arity as a predicate
+ * indicator: (type_error predicate_indicator (/ LOCATION _)) in its context.
+ * An unbound LOCATION, where the reference reads every predicate it has,
+ * raises instantiation_error with no context. */
+Atom *petta_semantics_space_atoms_error(Arena *arena, Atom *location);
+/* match's, by its pattern: a conjunction's is its first pattern's, which is
+ * read first; an unbound pattern's is get-atoms'; any other pattern's is the
+ * atom's (petta_semantics_space_atom_error).  An empty conjunction reads no
+ * space and raises nothing. */
+Atom *petta_semantics_space_read_error(Arena *arena, Atom *location,
+                                       Atom *pattern);
 /* What (Predicate V) gives for the value V of its argument, the reference's
  * 'Predicate'([F|Args], T) :- T =.. [F|Args]: a list whose first element is
  * a symbol names that compound, and a list of one element names the element.
@@ -888,6 +939,14 @@ bool petta_semantics_closure_remaining(const Atom *atom,
  * reads a body it compiles: the body of let, chain and let*, the last form
  * of progn, the first of prog1.  Zero for any other body. */
 CettaExprIndex petta_semantics_output_child(const Atom *body);
+/* The child whose value a form written as an application's head answers as
+ * its own, so that a partial application there keeps the evidence of its
+ * declarations for the application the head is written in (stable-fixed's
+ * translator passes it through these forms): a body's output child
+ * (petta_semantics_output_child), the operand of once and transaction, the
+ * goal of with_mutex and the template of match.  Zero for any other
+ * expression. */
+CettaExprIndex petta_semantics_head_result_child(const Atom *head);
 
 /*
  * A CLOSED open-cons chain denotes exactly the flat list it spells — the

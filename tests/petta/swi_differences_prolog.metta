@@ -56,3 +56,18 @@
 (= (dt-t $x $y) (let True (dt-i $x $z) (dt-i $z $y)))
 (= (dt-i $x $y) (dt-t $y $x))
 (= (dt-i $x $y) (dt-p $y $x))
+; 26. static-import! of an operand that names no space raises the term
+;     add-atom raises for it, once the file is found: every atom of a
+;     static file is an expression, so (Error (type_error atom X) (context
+;     (: system (/ =.. 2)) _)), and instantiation_error in that context for
+;     an unbound operand; nothing is loaded.  SWI-PeTTa's static-import!
+;     never reads its operand: it names the facts' predicate by the
+;     operand's printed text, so 42, (, &a &b) or an unbound operand gets
+;     the file's facts under '42', '[,,&a,&b]' or a variable's name, and the
+;     call answers true; a match of 42 then raises.
+;     Decided 2026-11-26 by P-ERR-5's law: one law for every space write.
+; SWI-PeTTa: true, true, true
+!(import! &self (library lib_import))
+!(catch (static-import! 42 fixtures/static_import_edges))
+!(catch (static-import! (, &a &b) fixtures/static_import_edges))
+!(catch (static-import! $operand fixtures/static_import_edges))

@@ -52,3 +52,15 @@
 ; A file that does not exist raises the reference's existence error.
 !(let (Error $formal $context) (catch (static-import! facts fixtures/no_such_file))
     caught)
+
+; One law for every space write: an operand that names no space raises the
+; term add-atom raises for it once the file is found, every atom of a static
+; file being an expression ([DIFF-26]); nothing is loaded, so no space
+; changes.  A missing file raises its existence error first.
+!(catch (static-import! 42 fixtures/static_import_edges))
+!(catch (static-import! (, facts others) fixtures/static_import_edges))
+!(catch (static-import! $operand fixtures/static_import_edges))
+!(case (catch (static-import! 42 fixtures/no_such_file))
+   (((Error (type_error $kind $value) $context) operand-refused)
+    ((Error $formal $context) file-missing)))
+!(sort-atom (collapse (match facts (edge $x $y) ($x $y))))

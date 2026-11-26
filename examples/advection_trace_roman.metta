@@ -65,9 +65,9 @@
 
 ; Drive the engine and query for (Inheritance A D).
 ; PLN.Query returns ($TV $stamp) for the highest-confidence belief matching
-; the query term.  We cap maxsteps at 25 because:
-;   - by step 18 the engine derives (Inheritance A D) via C with stv (0.5 0.9),
-;   - by step 19 it revises against the via-B derivation, producing
+; the query term.  We cap maxsteps at 30 because:
+;   - by step 28 the engine derives (Inheritance A D) via C with stv (0.5 0.9),
+;   - by step 29 it revises against the via-B derivation, producing
 ;     (stv 0.5 0.9473684210526316) with the merged stamp (1 2 3 4) ---
 ;     exactly the analytic prediction,
 ;   - extra steps add churn (further revisions whose confidence only stays
@@ -78,8 +78,8 @@
 ;
 ; where 0.9473... = w2c(c2w(0.9) + c2w(0.9)) = 18/19, and (1 2 3 4) is the
 ; insertion-sorted union of the four input stamps.
-!(println! "Final PLN.Query result for (Inheritance A D), maxsteps=25:")
-!(println! (PLN.Query (kb) (Inheritance A D) 25))
+!(println! "Final PLN.Query result for (Inheritance A D), maxsteps=30:")
+!(println! (PLN.Query (kb) (Inheritance A D) 30))
 
 !(println! "")
 !(println! "=== Trace demo complete ===")

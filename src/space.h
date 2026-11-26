@@ -2072,6 +2072,17 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);
 
+/* The declarations get-type reads for SUBJECT, in logical space order: each
+ * `(: subject type)` whose subject is SUBJECT as written, and, when SUBJECT
+ * is ground, each whose subject is a pattern SUBJECT instantiates, its type
+ * under that instance (SWI-PeTTa's get-type matches (: X T) in the space).
+ * A typed call's policy reads its function's written declarations alone
+ * (space_get_declared_types).  An open SUBJECT keeps the written reading:
+ * a pattern it meets may bind its variables, which only the relational
+ * query can answer. */
+uint32_t space_get_subject_declared_types(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types);
+
 /* Conservative exclusion for relational (: subject type) queries. False
  * certifies that no current occurrence can have the requested subject's
  * outer constructor; true retains ordinary relational search. */

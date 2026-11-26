@@ -46,6 +46,9 @@ lowering, preserves the local-read footprint, and instantiates exact bounded
 fallback. Its primitive operations are parameters; these theorems are not a
 verification of native C or concrete IEEE implementations.
 
+Building that development with its pinned toolchain is a Lean check outside
+the tests (no test target or readiness tier runs it):
+
   make qualify-prepared-scalar-lean METTAPEDIA_LEAN_ROOT=path/to/mettapedia
 
 This optimization applies to ordinary prepared numerical equations. Packed

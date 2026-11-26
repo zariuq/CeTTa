@@ -9723,6 +9723,55 @@ static bool import_as_rename_document(TermUniverse *universe,
     return ok;
 }
 
+/* One form of a PeTTa document, read as sread reads it (grounded.c): by the
+ * session's document parser, else by the S-expression parser. */
+static bool petta_document_form_reads(void *context, const char *form,
+                                      size_t length) {
+    (void)context;
+    char *copy = malloc(length + 1u);
+    if (!copy)
+        return true;
+    memcpy(copy, form, length);
+    copy[length] = '\0';
+    Arena scratch;
+    arena_init(&scratch);
+    bool session_reader = false;
+    Atom *parsed = parser_read_document_term_n(&scratch, copy, length,
+                                               &session_reader);
+    if (!session_reader) {
+        bool old_rational_literals = parser_set_rational_literals_enabled(true);
+        size_t pos = 0u;
+        if (parser_text_well_formed_n(copy, length)) {
+            parsed = parse_sexpr_n(&scratch, copy, length, &pos);
+            if (parsed && !parser_rest_is_delimiters_n(copy, length, &pos))
+                parsed = NULL;
+        }
+        parser_set_rational_literals_enabled(old_rational_literals);
+    }
+    bool reads = parsed != NULL;
+    arena_free(&scratch);
+    free(copy);
+    return reads;
+}
+
+/* What PeTTa's import! raises for the document at PATH when it cannot be
+ * read: the reference's syntax error, its context naming the file (P-ERR-5).
+ * NULL when the document reads, or cannot be opened. */
+static Atom *petta_document_read_error(Arena *arena, const char *path) {
+    CettaStringBuf text;
+    if (!arena || !path || !library_read_text_file(path, &text, NULL, 0u))
+        return NULL;
+    Atom *error = petta_semantics_document_syntax_error(
+        arena, text.buf ? text.buf : "", text.len, path,
+        petta_document_form_reads, NULL);
+    cetta_sb_free(&text);
+    return error;
+}
+
+Atom *cetta_library_petta_document_read_error(Arena *arena, const char *path) {
+    return petta_document_read_error(arena, path);
+}
+
 static bool load_he_document(CettaLibraryContext *ctx, const char *path,
                               Space *space, Arena *eval_arena,
                               Arena *persistent_arena, Registry *registry,
@@ -9884,7 +9933,13 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
             n = -1;
         if (n < 0) {
             ok = false;
-            *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
+            /* PeTTa raises the reference's syntax error for a document it
+             * cannot read (P-ERR-5). */
+            *error_out = ctx->session.language_id == CETTA_LANGUAGE_PETTA
+                ? petta_document_read_error(eval_arena, path) : NULL;
+            if (!*error_out)
+                *error_out = module_reason(ctx, eval_arena,
+                                           "ModuleParseFailed", path);
         } else {
             CettaPettaDocumentFailure failure =
                 CETTA_PETTA_DOCUMENT_OK;
@@ -12216,6 +12271,41 @@ static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
     }
     return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                                registry, fuel, NULL, error_out);
+}
+
+bool cetta_library_import_source_resolves(CettaLibraryContext *ctx,
+                                          const char *spec,
+                                          Arena *eval_arena,
+                                          bool *metta_document_out,
+                                          Atom **error_out) {
+    CettaModuleSpec parsed_spec;
+    CettaImportPlan plan;
+    if (metta_document_out)
+        *metta_document_out = false;
+    if (!ctx || !spec || !eval_arena || !error_out)
+        return false;
+    if (cetta_library_lookup(spec) || cetta_native_module_lookup(spec))
+        return true;
+    /* The plan only records the spaces it is given; finding the source
+     * reads none of them. */
+    if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out) ||
+        !resolve_import_plan(ctx, &parsed_spec, NULL, NULL, false, &plan,
+                             eval_arena, error_out))
+        return false;
+    if (metta_document_out)
+        *metta_document_out = plan.format.kind == CETTA_MODULE_FORMAT_METTA;
+    /* PeTTa reads the whole document before it runs or adds any of it: a
+     * document it cannot read raises its syntax error first (P-ERR-5). */
+    if (plan.format.kind == CETTA_MODULE_FORMAT_METTA &&
+        ctx->session.language_id == CETTA_LANGUAGE_PETTA) {
+        Atom *unreadable =
+            petta_document_read_error(eval_arena, plan.canonical_path);
+        if (unreadable) {
+            *error_out = unreadable;
+            return false;
+        }
+    }
+    return true;
 }
 
 bool cetta_library_import_error_is_missing_module(Atom *error) {

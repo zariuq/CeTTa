@@ -281,8 +281,8 @@ def authority_rows() -> dict[str, dict[str, str]]:
 
 
 def authority_sources(
-    he_root: Path, cetta_root: Path, mettapedia_root: Path
-) -> tuple[str, str, str, str, str]:
+    he_root: Path, cetta_root: Path, mettapedia_root: Path | None
+) -> tuple[str, str, str, str | None, str | None]:
     # The recorded revisions and digests say where the correspondence was
     # read; a source that has moved since is a note, and the markers each
     # source must still carry decide.
@@ -313,6 +313,8 @@ def authority_sources(
         "cetta-he-compat-parser-v1",
         EXPECTED_CETTA_SOURCE_DIGEST,
     )
+    if mettapedia_root is None:
+        return specification, rust_source, cetta_source, None, None
     leatta_spec = checked_source(
         mettapedia_root,
         "leatta-he-syntax-v1",
@@ -571,16 +573,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--he-root", type=Path, required=True)
     parser.add_argument("--cetta-root", type=Path, required=True)
-    parser.add_argument("--mettapedia-root", type=Path, required=True)
+    parser.add_argument(
+        "--mettapedia-root", type=Path,
+        help="also check the LeaTTa sources in this MeTTapedia checkout "
+             "(Lean alignment; the gate itself reads HE and CeTTa only)")
     arguments = parser.parse_args()
     he_root = arguments.he_root.resolve()
     cetta_root = arguments.cetta_root.resolve()
-    mettapedia_root = arguments.mettapedia_root.resolve()
+    mettapedia_root = (
+        arguments.mettapedia_root.resolve()
+        if arguments.mettapedia_root is not None else None
+    )
     if not he_root.is_dir():
         raise GateFailure("pinned HE checkout is absent")
     if not cetta_root.is_dir():
         raise GateFailure("pinned CeTTa checkout is absent")
-    if not mettapedia_root.is_dir():
+    if mettapedia_root is not None and not mettapedia_root.is_dir():
         raise GateFailure("pinned MeTTapedia checkout is absent")
 
     specification, source, cetta_source, leatta_spec, leatta_parser = (
@@ -589,11 +597,13 @@ def main() -> int:
     check_markers("HE written specification", specification, SPEC_MARKERS)
     check_markers("Rust HE parser", source, SOURCE_MARKERS)
     check_markers("CeTTa HE parser", cetta_source, CETTA_MARKERS)
-    check_markers("LeaTTa HE syntax", leatta_spec, LEATTA_SPEC_MARKERS)
-    check_markers("LeaTTa parser", leatta_parser, LEATTA_PARSER_MARKERS)
-    check_forbidden_markers(
-        "LeaTTa parser", leatta_parser, LEATTA_PARSER_FORBIDDEN_MARKERS
-    )
+    leatta_checked = leatta_spec is not None and leatta_parser is not None
+    if leatta_checked:
+        check_markers("LeaTTa HE syntax", leatta_spec, LEATTA_SPEC_MARKERS)
+        check_markers("LeaTTa parser", leatta_parser, LEATTA_PARSER_MARKERS)
+        check_forbidden_markers(
+            "LeaTTa parser", leatta_parser, LEATTA_PARSER_FORBIDDEN_MARKERS
+        )
     rules = presentation_rules()
     modeled, rejected, divergences, separate = check_manifest(source, rules)
     settled, ratification, separate_layers = check_contract(rules)
@@ -615,7 +625,8 @@ def main() -> int:
         "(HEReaderContractConformanceV1Summary "
         f"{len(EXPECTED_CONTRACT_CLAUSES)} {settled} {ratification} "
         f"{separate_layers} {len(SPEC_MARKERS)} {len(CETTA_MARKERS)} "
-        f"{len(LEATTA_SPEC_MARKERS)} {len(LEATTA_PARSER_MARKERS)} 0)"
+        f"{len(LEATTA_SPEC_MARKERS) if leatta_checked else 0} "
+        f"{len(LEATTA_PARSER_MARKERS) if leatta_checked else 0} 0)"
     )
     return 0
 

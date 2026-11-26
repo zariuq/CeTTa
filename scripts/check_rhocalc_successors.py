@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""One-step successors and rhometta run outcomes of rho fixtures, checked
+against their recorded expectations."""
 
 from __future__ import annotations
 
@@ -292,11 +294,10 @@ def he_expect_true(bin_path: str, support_fixture: Path, expr: str) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 8:
+    if len(sys.argv) != 6:
         print(
-            "usage: rhocalc_lean_trace_bridge.py "
-            "<bin> <fixture.mrho> <expected-count> <mode> <expected-file-or-dash> "
-            "<lean-file> <theorem>",
+            "usage: check_rhocalc_successors.py "
+            "<bin> <fixture.mrho> <expected-count> <mode> <expected-file-or-dash>",
             file=sys.stderr,
         )
         return 2
@@ -306,19 +307,16 @@ def main() -> int:
     expected_count = int(sys.argv[3])
     mode = sys.argv[4]
     expected_file_arg = sys.argv[5]
-    lean_file = Path(sys.argv[6])
-    theorem = sys.argv[7]
 
     if mode not in (
         "exact-one-step-nonempty",
         "exact-one-step-empty",
         "exact-one-step-match-file",
-        "cetta-empty-lean-can-step",
         "rhometta-run-exact-set",
         "he-expect-true",
     ):
         print(
-            "mode must be exact-one-step-nonempty, exact-one-step-empty, exact-one-step-match-file, cetta-empty-lean-can-step, rhometta-run-exact-set, or he-expect-true",
+            "mode must be exact-one-step-nonempty, exact-one-step-empty, exact-one-step-match-file, rhometta-run-exact-set, or he-expect-true",
             file=sys.stderr,
         )
         return 2
@@ -335,21 +333,6 @@ def main() -> int:
             he_expect_true(bin_path, fixture, expr)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
-            return 1
-
-        if lean_file == Path("-") or theorem == "-":
-            return 0
-
-        try:
-            lean_text = lean_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-
-        if theorem not in lean_text:
-            print("lean theorem name not found", file=sys.stderr)
-            print(f"file: {lean_file}", file=sys.stderr)
-            print(f"theorem: {theorem}", file=sys.stderr)
             return 1
 
         return 0
@@ -386,21 +369,6 @@ def main() -> int:
             print(f"actual-run: {actual_run_line}", file=sys.stderr)
             return 1
 
-        if lean_file == Path("-") or theorem == "-":
-            return 0
-
-        try:
-            lean_text = lean_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-
-        if theorem not in lean_text:
-            print("lean theorem name not found", file=sys.stderr)
-            print(f"file: {lean_file}", file=sys.stderr)
-            print(f"theorem: {theorem}", file=sys.stderr)
-            return 1
-
         return 0
 
     try:
@@ -421,7 +389,7 @@ def main() -> int:
         print(f"fixture: {fixture}", file=sys.stderr)
         return 1
 
-    if mode in ("exact-one-step-empty", "cetta-empty-lean-can-step") and len(successors) != 0:
+    if mode == "exact-one-step-empty" and len(successors) != 0:
         print("expected empty one-step successor set but found successors", file=sys.stderr)
         print(f"fixture: {fixture}", file=sys.stderr)
         print(f"successor-count: {len(successors)}", file=sys.stderr)
@@ -458,23 +426,6 @@ def main() -> int:
             print(f"expected: {expected_residual}", file=sys.stderr)
             print(f"actual: {successors[0]}", file=sys.stderr)
             return 1
-
-    try:
-        lean_text = lean_file.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
-    if theorem not in lean_text:
-        print("lean theorem name not found", file=sys.stderr)
-        print(f"file: {lean_file}", file=sys.stderr)
-        print(f"theorem: {theorem}", file=sys.stderr)
-        return 1
-
-    if mode == "cetta-empty-lean-can-step" and "CanStep" not in lean_text:
-        print("Lean CanStep witness not found in theorem file", file=sys.stderr)
-        print(f"file: {lean_file}", file=sys.stderr)
-        return 1
 
     return 0
 

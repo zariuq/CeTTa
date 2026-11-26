@@ -97,18 +97,20 @@
 
 (: conditional-probability-consistency (-> Number Number Number Bool))
 (= (conditional-probability-consistency $As $Bs $ABs)
-   (and (< 0 $As)
-        (and (<= (smallest-intersection-probability $As $Bs) $ABs)
-             (<= $ABs (largest-intersection-probability $As $Bs)))))
+   (if (< 0 $As)
+       (and (<= (smallest-intersection-probability $As $Bs) $ABs)
+            (<= $ABs (largest-intersection-probability $As $Bs)))
+       false))
 
 (= (Consistency_ImplicationImplicantConjunction $As $Bs $Cs $ACs $BCs)
    ; Conditional probability consistency checks:
    ; P(C|A) <= P(C)/P(A)  =>  $sAC <= $sC / $sA
    ; P(C|B) <= P(C)/P(B)  =>  $sBC <= $sC / $sB
    ; Also ensure denominators are not zero for the checks.
-   (and5 (> $As 0) (> $Bs 0) (> $Cs 0) ; Avoid division by zero and ensure meaningful probabilities
-         (<= $ACs (/ $Cs $As))
-         (<= $BCs (/ $Cs $Bs))))
+   (if (and (> $As 0) (and (> $Bs 0) (> $Cs 0))) ; Avoid division by zero and ensure meaningful probabilities
+       (and (<= $ACs (/ $Cs $As))
+            (<= $BCs (/ $Cs $Bs)))
+       false))
 
 ;; Truth functions
 
@@ -291,16 +293,16 @@
        (($LinkType $C $B) $T2))
    (if (SyllogisticRuleGuard $LinkType)
        (($LinkType $A $B) (Truth_Induction (STV $A)
-                                           (STV $B)
-                                           (STV $C) $T1 $T2)) (empty)))
+                                           (STV $C)
+                                           (STV $B) $T1 $T2)) (empty)))
 
 ; Abduction rule, see https://github.com/opencog/pln/blob/master/opencog/pln/rules/wip/abduction.scm
 (= (|- (($LinkType $A $C) $T1)
        (($LinkType $B $C) $T2))
    (if (SyllogisticRuleGuard $LinkType)
        (($LinkType $A $B) (Truth_Abduction (STV $A)
-                                           (STV $B)
-                                           (STV $C) $T1 $T2)) (empty)))
+                                           (STV $C)
+                                           (STV $B) $T1 $T2)) (empty)))
 
 ;Usage of inheritance for predicates
 ;unary arg

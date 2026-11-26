@@ -430,7 +430,6 @@ tests/test_list_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_he_argument_effects.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_he_syntax.metta	he	metta	extended	main	native	test	golden	-
-tests/test_lts_mi_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_causal_trace.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_location.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_observer_transparency.metta	he	metta	extended	main	native	test	property	state and counter observations checked by test-rhocalc-cost-observer-transparency
@@ -546,6 +545,7 @@ tests/test_pathmap_scientific_float_roundtrip_regression.metta	he	metta	extended
 tests/test_pathmap_scoped_queries.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_stored_variable_exact_query_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_typed_query_syntax.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pln_middle_term.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pln_portable_minmax_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pow_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pow_math_big_exp.metta	he	metta	extended	main	native	test	golden	-
@@ -720,6 +720,7 @@ tests/test_with_space_snapshot_escape.metta	he	metta	extended	main	native	test	g
 tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_wmpln_middle_term.metta	he	metta	extended	main	native	test	golden	-
 tests/test_work_control.metta	he	metta	extended	main	native	test	golden	-
 tests/test_work_observers.metta	he	metta	extended	main	native	test	golden	-
 tests/test_work_routes.metta	he	metta	extended	main	native	test	golden	-

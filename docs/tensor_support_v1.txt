@@ -420,14 +420,17 @@ Qualification
   make test-list-prefix-search test-tensor-support
   make test-tensor test-tensor-screening test-postings test-group-sums test-embedding
   make test-embedding-http ENABLE_HTTP=1
+
+Lean alignment, outside the tests (no test target or readiness tier runs it):
+
   make qualify-tensor-support-lean METTAPEDIA_LEAN_ROOT=path/to/mettapedia
 
 The prefix suite compares both evaluator routes against Python's bisect and
 an independent linear count, including duplicates, negative and large exact
 integers, empty inputs, floats and both supported sequence representations.
 The tensor source controls cover both fill cases, both presence cases, inert
-data and a type-mismatched constructor. The Lean source client is checked
-with the project's pinned MeTTapedia environment.
+data and a type-mismatched constructor. The alignment target checks the Lean
+source client with the project's pinned MeTTapedia environment.
 
 Optional provider controls are test-tensor-dlpack and
 test-tensor-dlpack-numpy (the latter additionally needs NumPy). Performance

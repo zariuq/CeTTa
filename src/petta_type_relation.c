@@ -455,10 +455,13 @@ static bool petta_type_list_elements(
     return true;
 }
 
+/* get-type's own candidates: the declarations of the subject, a pattern
+ * subject among them when the subject is ground (space.h). */
 static bool petta_type_push_declared(
     Space *space, Arena *arena, Atom *subject, PeTTaTypeList *out) {
     Atom **declared = NULL;
-    uint32_t count = space_get_declared_types(space, arena, subject, &declared);
+    uint32_t count = space_get_subject_declared_types(
+        space, arena, subject, &declared);
     bool ok = true;
     for (uint32_t i = 0u; ok && i < count; i++)
         ok = petta_type_list_push(out, declared[i]);

@@ -1,4 +1,4 @@
-; Typed calls as SWI-PeTTa stable-fixed runs them (last aligned at 9e8fbb6).
+; Typed calls as SWI-PeTTa stable-fixed runs them (last aligned at e4e345f).
 ; Every answer below is stable-fixed's, except where a line says that a call
 ; through a variable keeps the declarations (approved difference 14): there
 ; it is the written call's answer.
