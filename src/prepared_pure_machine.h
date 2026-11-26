@@ -357,6 +357,29 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
 bool cetta_prepared_pure_program_is_current(
     CettaPreparedPureProgram *program);
 
+/* Revalidate an immutable compiled program against `space` using its recorded
+ * per-head dependency set.  Unrelated edits (data writes, definitions or
+ * type assignments on other head symbols) leave the program valid and advance
+ * its version guard without recompiling. */
+bool cetta_prepared_pure_program_refresh(
+    CettaPreparedPureProgram *program, Space *space)
+    __attribute__((cold, noinline));
+
+/* Borrow the sorted, deduplicated dependency head symbols recorded during
+ * compilation.  Returns NULL if the dependency set is incomplete or empty. */
+const SymbolId *cetta_prepared_pure_program_read_heads(
+    const CettaPreparedPureProgram *program, uint32_t *count_out);
+
+/* True when a program compiled against a module space can be safely shared
+ * across every importer that adds nothing on its dependency heads. */
+bool cetta_prepared_pure_program_module_shareable(
+    const CettaPreparedPureProgram *program);
+
+/* True when the compiled node graph contains at least two user-defined call
+ * sites (a cheap O(nodes) pre-filter for branching recursion). */
+bool cetta_prepared_pure_program_has_multiple_calls(
+    const CettaPreparedPureProgram *program);
+
 /* The compiled node graph only selects, constructs, or observes values.
  * It neither interprets argument syntax nor matches/binds caller variables.
  * A live unresolved branch condition can still decline at execution. */

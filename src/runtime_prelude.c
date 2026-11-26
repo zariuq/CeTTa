@@ -247,6 +247,23 @@ static void runtime_add_prime_semantic_op_decls(Space *space, Arena *arena) {
  * Unavailable extensions contribute no library declarations or equations. Filter them
  * here, before loading the program, rather than rejecting user-declared
  * types or untyped data that happen to use the same spelling. */
+static bool runtime_builtin_symbol_allowed(CettaLanguageId language_id,
+                                           const CettaProfile *profile,
+                                           SymbolId id) {
+    if (id == SYMBOL_ID_NONE)
+        return true;
+    uint32_t known = symbol_builtin_policy(g_symbols, id);
+    const CettaBuiltinPolicy *policy = NULL;
+    if (known) {
+        policy = cetta_builtin_policy_at_position(known - 1u);
+    } else {
+        policy = cetta_builtin_policy_lookup(symbol_bytes(g_symbols, id));
+        symbol_set_builtin_policy(
+            g_symbols, id, cetta_builtin_policy_position(policy) + 1u);
+    }
+    return cetta_language_allows_builtin_policy(language_id, profile, policy);
+}
+
 static bool runtime_he_prepare_library(Space *space, Arena *arena,
                                     const CettaProfile *profile) {
     bool extensions = !cetta_language_uses_rust_he_compat_semantics(
@@ -269,8 +286,8 @@ static bool runtime_he_prepare_library(Space *space, Arena *arena,
             Atom *head = pattern->kind == ATOM_EXPR && pattern->expr.len
                 ? pattern->expr.elems[0] : pattern;
             if (head->kind == ATOM_SYMBOL &&
-                (!cetta_language_allows_builtin(
-                    CETTA_LANGUAGE_HE, profile, atom_name_cstr(head)) ||
+                (!runtime_builtin_symbol_allowed(
+                    CETTA_LANGUAGE_HE, profile, head->sym_id) ||
                  (!extensions && pattern->kind == ATOM_EXPR &&
                   he_library_declares(head) &&
                   !he_library_declares_arity(head, pattern->expr.len - 1u))))
@@ -282,8 +299,8 @@ static bool runtime_he_prepare_library(Space *space, Arena *arena,
         Atom *subject = atom->expr.elems[1];
         Atom *type = atom->expr.elems[2];
         if (subject->kind == ATOM_SYMBOL &&
-            !cetta_language_allows_builtin(
-                CETTA_LANGUAGE_HE, profile, atom_name_cstr(subject))) {
+            !runtime_builtin_symbol_allowed(
+                CETTA_LANGUAGE_HE, profile, subject->sym_id)) {
             mask[i] = 1u;
             continue;
         }

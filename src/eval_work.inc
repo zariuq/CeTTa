@@ -277,7 +277,8 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     Space *space = work->space;
     Atom *source = work->source;
     bool frontier = strategy != EVAL_WORK_DEPTH_FIRST;
-    if (space_has_dependencies(space) ||
+    if ((space_has_dependencies(space) &&
+         work->language != CETTA_LANGUAGE_PETTA) ||
         work->language == CETTA_LANGUAGE_PRIME)
         return false;
     bool he = work->language == CETTA_LANGUAGE_HE;

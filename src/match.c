@@ -3633,7 +3633,10 @@ static BindingsFrameRelocations *bindings_frame_relocations(
     if (memo) return memo;
     memo = cetta_malloc(sizeof(*memo));
     memset(memo, 0, sizeof(*memo));
-    memo->capacity = 64u;
+    /* A promotion relocates a frame or two: the table starts small and
+     * doubles (bindings_frame_relocation_store), and its release walks
+     * every slot. */
+    memo->capacity = 4u;
     memo->entries = cetta_malloc(memo->capacity * sizeof(*memo->entries));
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
         sizeof(*memo) + memo->capacity * sizeof(*memo->entries));

@@ -24,11 +24,21 @@ typedef struct EvalOutcome EvalOutcome;
 #define CETTA_IMPORT_PREFIX_MAX 128
 
 typedef struct {
+    char prefix[CETTA_IMPORT_PREFIX_MAX];
+    Space *space;
+} CettaImportAsView;
+
+typedef struct {
     char display_name[PATH_MAX];
     char canonical_path[PATH_MAX];
     CettaModuleProviderKind provider_kind;
     CettaModuleFormat format;
     Space *space;
+    /* Shared unrenamed data space and per-prefix renamed view spaces for
+       import-as! so every prefix shares one loaded module instance. */
+    Space *shared_data_space;
+    CettaImportAsView *import_as_views;
+    uint32_t import_as_view_len, import_as_view_cap;
     /* An HE module's own tokens: its `&self`, and those its code binds.
        They are read into its text as it is loaded and stay private to it.
        NULL for a module without its own tokens. */
@@ -199,6 +209,9 @@ typedef struct CettaLibraryContext {
     /* Set while an he-compat include that met a syntax fault keeps the
        statements it had already read. */
     bool include_fault_keeps_prefix;
+    /* When true in PeTTa, import! loads each MeTTa module once in its own
+       linked space (as in HE) instead of copying its atoms into the importer. */
+    bool petta_linked_import;
     /* The prefix of a pending import-as!.  The next module document read
        takes it, so imports that document performs are not renamed. */
     char import_as_prefix[CETTA_IMPORT_PREFIX_MAX];
@@ -273,6 +286,15 @@ typedef struct CettaLibraryContext {
      * through `petta_open_programs_free`. */
     void *petta_open_programs;
     void (*petta_open_programs_free)(void *programs);
+    /* Module-compiled prepared-pure programs shared across importers that add
+     * nothing on their dependency heads.  Owned by the evaluator, freed
+     * through `module_pure_programs_free`. */
+    void *module_pure_programs;
+    void (*module_pure_programs_free)(void *programs);
+    /* Space-compiled tcalc programs guarded by per-head version counters.
+     * Owned by the tcalc module, freed through `tcalc_space_cache_free`. */
+    void *tcalc_space_cache;
+    void (*tcalc_space_cache_free)(void *cache);
     /* The search machine's compiled match decisions, kept for the session
      * per space; owned by the evaluator, which frees them through
      * `petta_match_decisions_free`. */

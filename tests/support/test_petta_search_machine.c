@@ -4499,8 +4499,15 @@ static void test_compiled_dependency_appends(TermUniverse *universe, Arena *aren
         if (trial < sizeof(mutations)/sizeof(*mutations)) {
             space_add(&space, parse_one(arena, mutations[trial]));
         } else if (trial == sizeof(mutations)/sizeof(*mutations)) {
+            /* Removing an unrelated type assignment leaves an armed per-head
+             * version guard current; removing a watched definition invalidates
+             * it immediately. */
             assert(space_remove(&space, parse_one(arena,
                 "(: independent-0 (-> Number Number))")));
+            assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+            before = reads;
+            assert(space_remove(&space, parse_one(arena,
+                "(= (foot-callee $x) (FootBox $x))")));
         } else if (trial == sizeof(mutations)/sizeof(*mutations) + 1u) {
             /* A data-only prefix rewrite changes no compiled read. */
             Atom *fact = parse_one(arena, "(foot-data 1)");

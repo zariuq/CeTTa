@@ -231,6 +231,19 @@ uint64_t eval_current_native_observer_mask(void) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
+
+/* Capability-authorized head write/remove entry points used by `lib/seal`
+ * (`seal:head-add` and `seal:head-remove`).  Returns true on success; on
+ * refusal sets `*seal_reason_out` (for `(SealFault REASON)`) or `*error_out`. */
+struct CettaSealObject;
+bool eval_authorized_head_space_add(
+    Space *target, Arena *arena, Atom *call, Atom *payload,
+    struct CettaSealObject *facet, const char **seal_reason_out,
+    Atom **error_out) __attribute__((weak));
+bool eval_authorized_head_space_remove(
+    Space *target, Arena *arena, Atom *call, Atom *payload,
+    struct CettaSealObject *facet, const char **seal_reason_out,
+    Atom **error_out) __attribute__((weak));
 /* The type stamp store (space.c) keeps typings across inferences where the
  * evaluator vouches for an atom's arena.  eval_type_stamp_scope says whether
  * the current evaluation may, and names the language and profile it types

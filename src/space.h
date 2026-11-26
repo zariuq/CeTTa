@@ -344,6 +344,14 @@ typedef struct Space {
        been published here. Never cleared: a read that finds it false knows
        the space has no subtype rows. */
     bool declares_subtypes;
+    /* Nonzero once any non-prelude equation, module dependency, or overlay has
+       been attached to this space; zero for pure data/mutation spaces so the
+       compiled-route check is a single relaxed byte load. */
+    _Atomic uint8_t has_user_theory;
+    /* Equation revision recorded when `space_mark_imported_prefix` sealed the
+       prelude prefix (packed in the alignment gap before `prefix_epoch`), so
+       spaces with no user definitions stay O(1) to test at zero size cost. */
+    uint32_t imported_equation_revision;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
        publications preserve it: the rows keep their positions and new rows
@@ -968,6 +976,10 @@ static inline uint64_t space_equational_revision(const Space *s) {
 }
 static inline uint64_t space_instance_id(const Space *s) {
     return s ? atomic_load_explicit(&s->instance_id, memory_order_relaxed) : 0u;
+}
+static inline bool space_has_user_theory(const Space *s) {
+    return s && atomic_load_explicit(&s->has_user_theory,
+                                     memory_order_relaxed) != 0u;
 }
 
 /* A process-global monotonic counter bumped on every space revision bump.
