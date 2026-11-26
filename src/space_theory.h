@@ -30,9 +30,9 @@
 /* ── Theory Coordinate Token ────────────────────────────────────────────── */
 
 /* Lifetime-qualified coordinate of the live theory projection a Space presents
- * to callability, named-arity, typing, effect classification, and regional
- * admission.  Data-only mutations leave it unchanged.  An overlay freezes a
- * base storage prefix while reading its modules live; `base_dependency_epoch`
+ * to callability, named-arity, typing, effect classification, and region
+ * validity checks.  Data-only mutations leave it unchanged.  An overlay freezes
+ * a base storage prefix while reading its modules live; `base_dependency_epoch`
  * folds that chain so module appends invalidate overlays without unrelated
  * spaces doing so. */
 typedef struct SpaceTheoryToken {
@@ -50,11 +50,10 @@ static inline bool space_theory_token_cacheable(SpaceTheoryToken token) {
 
 /* Inline token capture: ordinary non-overlay spaces pay zero out-of-line
  * dependency-walk calls.  Revisions and lifetime identity are loaded
- * atomically (relaxed), ordered after acquire on space_global_program_epoch()
- * (Mettapedia/Machines/VersionedValidation/Clock.lean).  Equational-alias
- * mutations (`=e`) advance `equation_revision` alongside `equational_revision`,
- * so `SpaceTheoryToken` and `SpaceEquationToken` both invalidate on `=e` edits
- * without adding a sixth coordinate. */
+ * atomically (relaxed), ordered after acquire on space_global_program_epoch().
+ * Equation mutations (`=e`) advance `equation_revision` alongside
+ * `equational_revision`, so `SpaceTheoryToken` and `SpaceEquationToken` both
+ * invalidate on `=e` edits without adding a sixth coordinate. */
 static inline SpaceTheoryToken space_theory_token(const Space *s) {
     if (!s)
         return (SpaceTheoryToken){0};
@@ -487,11 +486,21 @@ bool space_theory_head_set_clock_current(
     const SpaceHeadSetStamp *stamp);
 
 /* True iff `importer` imports `module`, `module` seals `head` for all
- * requested `roles`, and neither `importer`'s own rows nor any sibling import
- * extends/shadows `(head, roles)` (including open rows and, when
- * `SPACE_THEORY_ROLE_ALIAS` is requested, active `=e` alias rows). */
+ * requested `roles`, and neither `importer`'s own atoms nor any sibling import
+ * extends/shadows `(head, roles)` (including open atoms and, when
+ * `SPACE_THEORY_ROLE_ALIAS` is requested, active `=e` equations). */
 bool space_theory_import_protects_head(
     const Space *importer, const Space *module, SymbolId head, uint8_t roles);
+
+/* True iff `importer` imports `module` directly, `importer` is not an overlay,
+ * and neither `importer`'s own atoms nor any sibling dependency touches any
+ * head symbol in `heads[0..head_count-1]` for `roles` (including open atoms
+ * and, when `SPACE_THEORY_ROLE_ALIAS` is requested, active `=e` equations).
+ * Does not require `module` to be sealed: used to share a module's compiled
+ * definitions with every importer that adds nothing on their dependency heads. */
+bool space_theory_import_protects_head_set(
+    const Space *importer, const Space *module,
+    const SymbolId *heads, uint32_t head_count, uint8_t roles);
 
 /* Cold write-path hook invoked only when `s->head_clocks != NULL`. */
 extern _Atomic uint64_t cetta_space_global_head_clocks_active;
@@ -506,6 +515,38 @@ static inline bool space_theory_any_head_clocks_active(void) {
 void space_theory_note_mutation_slow(
     Space *s, const SpaceHeadMutationNote *note, uint8_t fallback_roles)
     __attribute__((cold, noinline));
+
+/* ── Capability-Based Head Write Sealing (`lib/seal`) ───────────────────── */
+
+struct CettaSealObject;
+struct SpaceHeadAuthoritySeals;
+
+extern _Atomic uint64_t cetta_space_global_head_authority_seals_active;
+
+static inline bool space_theory_any_head_authority_seals_active(void) {
+    return __builtin_expect(
+        atomic_load_explicit(&cetta_space_global_head_authority_seals_active,
+                             memory_order_relaxed) != 0u,
+        0);
+}
+
+void space_head_authority_seals_free(struct SpaceHeadAuthoritySeals *seals);
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_clone_space(
+    const Space *src);
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_take(Space *s);
+bool space_head_authority_seals_merge(
+    Space *dst, const struct SpaceHeadAuthoritySeals *src);
+
+bool space_theory_head_attach_write_seal(
+    Space *s, SymbolId head, struct CettaSealObject *brand_anchor,
+    const char **reason_out);
+
+bool space_theory_head_is_authority_sealed(const Space *s, SymbolId head);
+
+bool space_theory_atom_check_head_seal(
+    const Space *target, const Atom *atom,
+    const struct CettaSealObject *offered_facet,
+    const char **reason_out);
 
 /* ── Observation Coarsening Lattice ─────────────────────────────────────── */
 

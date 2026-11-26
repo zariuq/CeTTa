@@ -596,13 +596,16 @@ PeTTaObservedEquality petta_semantics_observed_equal(Atom *left, Atom *right);
 bool petta_semantics_value_contains_observable_open_cons(
     const Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
-/* A structural index query for a resolved logical pattern. Closed spines,
- * at any depth, become the flat expressions they spell, so a key built as
- * cons cells selects the rows the same flat key selects. A spine that is
- * not closed is a private wildcard at its own place, and the rest of the
- * pattern still selects; that wildcard is never a unification pattern.
+/* The index's reading of a resolved match pattern, in either dialect: the
+ * selector the space's indexes see, never a unification pattern. Closed
+ * spines of cells, at any depth, become the flat expressions they spell, so
+ * a key built as cons cells selects the rows the same flat key selects. A
+ * spine that is not closed is a private wildcard at its own place, and the
+ * rest of the pattern still selects. A pattern holding no cell, as every HE
+ * pattern does, is its own selector: numbers keep their kinds, and the
+ * indexes key them so that numbers HE compares equal by value share a key.
  * `exact` distinguishes equivalent queries from complete approximations. */
-Atom *petta_semantics_match_index_pattern(
+Atom *match_index_selector(
     Arena *arena, Atom *pattern, bool *exact);
 /*
  * Conservative equation-index discriminator for PeTTa list patterns.

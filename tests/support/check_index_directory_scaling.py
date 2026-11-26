@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Index descriptions are found within a logarithmic comparison allowance.
+"""One index serves every head, found within a logarithmic comparison allowance.
 
-Warm one head-specific index per head, then revisit all heads in rounds.
-The fixture retains native rows so the relation shortcut cannot bypass the
-directory. Event counters must establish that the intended route ran.
+Every head is asked by the same bound column, then all heads are revisited
+in rounds: the space builds the column's index once, however many heads
+ask, and each lookup finds it within the allowance.  Adds of every head
+then update that one index once each.  The fixture retains native rows so
+the relation shortcut cannot bypass the directory. Event counters must
+establish that the intended route ran.
 Usage: check_index_directory_scaling.py CETTA_WITH_RUNTIME_STATS
 """
 import os
@@ -46,25 +49,30 @@ def run(binary, heads, updates=False):
     builds = counters["match-position-index-build"]
     probes = counters["match-position-index-directory-probe"]
     peak = counters["match-position-index-directory-probe-peak"]
+    # The lookups read one column's index; the prefix they bind may read
+    # its own: at most two builds, whatever the heads.
+    if builds > 2:
+        raise SystemExit(f"FAIL: {heads} heads built {builds} indexes; one index "
+                         f"of a kind serves every head")
     if updates:
         visits = counters.get("match-position-index-append-row", 0)
-        if builds != heads or not 0 < visits <= 2 * heads:
-            raise SystemExit(f"FAIL: {heads} head-local adds: {visits} index updates, "
+        if not 0 < visits <= 2 * heads:
+            raise SystemExit(f"FAIL: {heads} adds of every head: {visits} index updates, "
                              f"{builds} builds; at most two updates per add without rebuilding")
         return visits, builds
     limit = 2 * (heads + 1).bit_length()
-    if builds < heads or peak > limit or probes > 33 * heads * limit:
+    if peak > limit or probes > 33 * heads * limit:
         raise SystemExit(f"FAIL: {heads} heads: {builds} builds, {probes} comparisons, "
                          f"peak {peak}, at most {limit} per lookup")
-    return probes, peak
+    return probes, peak, builds
 
 
 def main():
     binary = os.path.abspath(sys.argv[1])
     observations = [(n, *run(binary, n)) for n in (160, 640)]
-    print("PASS: directory comparisons (heads, total, peak):", observations)
+    print("PASS: directory comparisons (heads, total, peak, builds):", observations)
     updates = [(n, *run(binary, n, updates=True)) for n in (160, 640)]
-    print("PASS: head-local append work (heads, index updates, builds):", updates)
+    print("PASS: append work (heads, index updates, builds):", updates)
 
 
 if __name__ == "__main__":

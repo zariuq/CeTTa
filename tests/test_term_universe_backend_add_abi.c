@@ -1023,6 +1023,23 @@ static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
     space_free(&native_space);
 }
 
+/* Whether the occurrence read of PATTERN, the reading a match scan opens,
+ * lends a row: a row it may meet, which the matcher then decides. */
+static bool occurrence_read_finds(Space *space, Atom *pattern) {
+    SpaceOccurrenceCursor cursor;
+    space_occurrence_cursor_init_empty(&cursor);
+    if (!space_occurrence_cursor_init(space, pattern, &cursor)) {
+        space_occurrence_cursor_release(&cursor);
+        return false;
+    }
+    CettaIndex index = 0u;
+    AtomId id = CETTA_ATOM_ID_NONE;
+    bool found = space_occurrence_cursor_next_id(&cursor, &index, &id) ==
+        SPACE_OCCURRENCE_CURSOR_ITEM;
+    space_occurrence_cursor_release(&cursor);
+    return found;
+}
+
 static void test_native_ground_exact_candidate_frontier(void) {
     Arena persistent;
     Arena scratch;
@@ -1052,24 +1069,13 @@ static void test_native_ground_exact_candidate_frontier(void) {
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE));
     space_add(&space, present);
 
-    /* An all-exact store can answer from borrowed expression coordinates and
-       from their shared term-view wrapper without constructing a query Atom. */
-    assert(space_match_exists_ground_exact_expression_coordinates(
-        &space, present->expr.elems, present->expr.len, &applicable));
+    /* An all-exact store answers membership from its exact index, and the
+       shared occurrence read lends the present row. */
+    assert(space_match_exists_ground_exact(&space, present, &applicable));
     assert(applicable);
-    assert(!space_match_exists_ground_exact_expression_coordinates(
-        &space, missing->expr.elems, missing->expr.len, &applicable));
+    assert(!space_match_exists_ground_exact(&space, missing, &applicable));
     assert(applicable);
-    CettaGsltTermViewV1 present_view = {
-        .source = present,
-    };
-    bool view_exists = false;
-    CettaIndex view_examined = UINT64_MAX;
-    assert(space_match_exists_flat_linear_view64(
-        &space, &scratch, &present_view,
-        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
-        &view_exists, &view_examined));
-    assert(view_exists && view_examined == 0u);
+    assert(occurrence_read_finds(&space, present));
 
     space_add(&space, unrelated_open);
     for (CettaIndex i = 0u; i < MATCH_TRIE_THRESHOLD; i++)
@@ -1087,13 +1093,7 @@ static void test_native_ground_exact_candidate_frontier(void) {
     applicable = false;
     assert(!space_match_exists_ground_exact(&space, missing, &applicable));
     assert(applicable);
-    view_exists = false;
-    view_examined = UINT64_MAX;
-    assert(space_match_exists_flat_linear_view64(
-        &space, &scratch, &present_view,
-        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
-        &view_exists, &view_examined));
-    assert(view_exists && view_examined > 0u);
+    assert(occurrence_read_finds(&space, present));
     space_match_native_ensure_trie(&space);
 
     /* The complete frontier excludes an open row beneath a different rigid
@@ -1112,13 +1112,9 @@ static void test_native_ground_exact_candidate_frontier(void) {
     applicable = true;
     assert(!space_match_exists_ground_exact(&space, related_open, &applicable));
     assert(!applicable);
-    view_exists = false;
-    view_examined = UINT64_MAX;
-    assert(space_match_exists_flat_linear_view64(
-        &space, &scratch, &present_view,
-        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
-        &view_exists, &view_examined));
-    assert(view_exists && view_examined > 0u);
+    /* The open row may meet the missing pattern: the read offers it. */
+    assert(occurrence_read_finds(&space, present));
+    assert(occurrence_read_finds(&space, missing));
 
     space_free(&space);
     term_universe_free(&universe);

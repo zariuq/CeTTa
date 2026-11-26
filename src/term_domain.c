@@ -69,8 +69,14 @@ CettaTermDomain *cetta_term_domain_new(TermUniverseStoreFormat format,
 }
 
 CettaTermDomain *cetta_term_domain_new_default(bool shares_atoms) {
-    return domain_new(TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1,
+    CettaTermDomain *domain = domain_new(TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1,
         TERM_UNIVERSE_COLLECTION_OFF, shares_atoms, true);
+    /* The runtime's domain serves every evaluation's reads: its decoded
+     * copies live in epochs, so those of collected terms are freed
+     * (term_universe_enable_decode_epochs). */
+    if (domain)
+        (void)term_universe_enable_decode_epochs(&domain->universe);
+    return domain;
 }
 
 bool cetta_term_domain_retain(void *context) {

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""A head's prefix lookups cost the head's rows, not the space's.
+"""One index serves every head's prefix lookups, each reading its own rows.
 
 Usage: check_prefix_heads_scaling.py CETTA_RUNTIME_STATS_BINARY
 
 Many heads of one row each, every one asked once by a bound prefix: at N and
-4 N heads the rows read building indexes grow at most 4.5 times (each head
-is read from the head index, no index built for it), and every lookup
-answers its row.  One head of many rows among ten times as many rows of
-other heads, asked by its prefix: its index is built from its own rows,
-fewer than twice them.
+4 N heads the rows read building indexes grow at most 4.5 times (one index
+serves every head, built reading each row once), and every lookup answers
+its row.  One head of many rows among ten times as many rows of other heads,
+asked by its prefix, and then a tenth of the other heads asked by theirs:
+one index serves them all, built once, reading each row of the space once,
+and every lookup is offered no more than its own rows under its key.
 """
 import os
 import subprocess
@@ -59,16 +60,26 @@ def heads(binary, work, count):
 def heavy(binary, work):
     rows = 600
     lines = [f"(big {j % 3} r{j})" for j in range(rows)]
-    lines += [f"(other{i} x y{i})" for i in range(10 * rows)]
+    lines += [f"(other{i} 7 y{i})" for i in range(10 * rows)]
     asked = [f"!(size-atom (collapse (match &self (big {k} $r) $r)))"
              for k in (0, 1, 2) for _ in range(4)]
+    others = [f"!(size-atom (collapse (match &self (other{i} 7 $y) $y)))"
+              for i in range(0, 10 * rows, 10)]
     rc, printed, counters = run(binary, work, "heavy.metta",
-                                "\n".join(lines + asked) + "\n")
-    if rc != 0 or printed != [str(rows // 3)] * len(asked):
-        print(f"FAIL: the heavy head answered {printed[:3]}..., expected "
-              f"{rows // 3} each")
+                                "\n".join(lines + asked + others) + "\n")
+    if rc != 0 or printed != [str(rows // 3)] * len(asked) + ["1"] * len(others):
+        print(f"FAIL: the heads answered {printed[:3]}..., expected "
+              f"{rows // 3} for each lookup of the heavy head and 1 for each other")
         return None
-    return rows, counters.get("match-position-index-build-row", 0)
+    lookups = counters.get("match-position-index-lookup", 0)
+    offered = counters.get("match-position-index-candidate", 0)
+    # A lookup of the heavy head is offered its key's third of the head's
+    # rows; one of another head, its one row.
+    if lookups == 0 or offered > lookups * (rows // 3):
+        print(f"FAIL: {lookups} lookups were offered {offered} rows")
+        return None
+    return (rows, counters.get("match-position-index-build", 0),
+            counters.get("match-position-index-build-row", 0), lookups, offered)
 
 
 def main():
@@ -83,14 +94,17 @@ def main():
         print(f"FAIL: building indexes read {small} rows for {SIZES[0]} heads and "
               f"{large} for {SIZES[1]}")
         return 1
-    rows, heavy_built = measured
-    if heavy_built > 2 * rows:
-        print(f"FAIL: a head of {rows} rows among {10 * rows} others was indexed "
-              f"reading {heavy_built} rows")
+    rows, builds, heavy_built, lookups, offered = measured
+    if builds != 1 or heavy_built > 11 * rows:
+        print(f"FAIL: a head of {rows} rows among {10 * rows} others and a tenth "
+              f"of those heads were indexed by {builds} builds reading "
+              f"{heavy_built} rows")
         return 1
-    print(f"PASS: prefix lookups cost their head's rows: {small} and {large} rows "
-          f"read building indexes for {SIZES[0]} and {SIZES[1]} heads; a head of "
-          f"{rows} rows indexed reading {heavy_built}")
+    print(f"PASS: one index serves every head's prefix lookups: {small} and {large} "
+          f"rows read building indexes for {SIZES[0]} and {SIZES[1]} heads; a head "
+          f"of {rows} rows among {10 * rows} others and {rows} of those heads "
+          f"indexed by one build reading {heavy_built}, {lookups} lookups offered "
+          f"{offered} rows")
     return 0
 
 

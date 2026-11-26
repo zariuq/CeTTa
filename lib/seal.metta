@@ -147,3 +147,132 @@
 (: __cetta_lib_seal_try-read-space (-> Atom Atom Atom Atom))
 (= (seal:try-read-space $service $capsule $key)
    (function (chain (eval (__cetta_lib_seal_try-read-space $service $capsule $key)) $result (return $result))))
+
+; Head-symbol write sealing: sealing a head symbol on a space returns an opaque
+; write facet.  Ordinary writes touching that head symbol (including from
+; importers that inherit the module) fault with (SealFault ...); writes through
+; the write facet via seal:head-add / seal:head-remove succeed.
+
+(: seal:seal-head (-> %Undefined% Atom Atom Atom))
+(: __cetta_lib_seal_seal-head (-> Atom Atom Atom Atom))
+(= (seal:seal-head $space $head $nick)
+   (function (chain (eval (__cetta_lib_seal_seal-head $space $head $nick)) $result (return $result))))
+
+(: seal:try-seal-head (-> %Undefined% Atom Atom Atom))
+(: __cetta_lib_seal_try-seal-head (-> Atom Atom Atom Atom))
+(= (seal:try-seal-head $space $head $nick)
+   (function (chain (eval (__cetta_lib_seal_try-seal-head $space $head $nick)) $result (return $result))))
+
+(: seal:head-add (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_head-add (-> Atom Atom Atom Atom))
+(= (seal:head-add $facet $space $atom)
+   (function (chain (eval (__cetta_lib_seal_head-add $facet $space $atom)) $result (return $result))))
+
+(: seal:try-head-add (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_try-head-add (-> Atom Atom Atom Atom))
+(= (seal:try-head-add $facet $space $atom)
+   (function (chain (eval (__cetta_lib_seal_try-head-add $facet $space $atom)) $result (return $result))))
+
+(: seal:head-remove (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_head-remove (-> Atom Atom Atom Atom))
+(= (seal:head-remove $facet $space $atom)
+   (function (chain (eval (__cetta_lib_seal_head-remove $facet $space $atom)) $result (return $result))))
+
+(: seal:try-head-remove (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_try-head-remove (-> Atom Atom Atom Atom))
+(= (seal:try-head-remove $facet $space $atom)
+   (function (chain (eval (__cetta_lib_seal_try-head-remove $facet $space $atom)) $result (return $result))))
+
+(: seal:head-sealed? (-> %Undefined% Atom Atom))
+(: __cetta_lib_seal_head-sealed? (-> Atom Atom Atom))
+(= (seal:head-sealed? $space $head)
+   (function (chain (eval (__cetta_lib_seal_head-sealed? $space $head)) $result (return $result))))
+
+; Portable cross-process capability tokens (carrier-tagged, versioned).
+; Initial carrier: macaroon-hmac-sha256 version 1 with structured MeTTa caveats:
+;   (head <sym>), (op add|remove|write), (expires <unix-ms>), (nonce <hex>).
+
+(: seal:now-ms (-> Atom))
+(: __cetta_lib_seal_now-ms (-> Atom Atom))
+(= (seal:now-ms)
+   (function (chain (eval (__cetta_lib_seal_now-ms now)) $result (return $result))))
+
+(: seal:new-token-authority (-> %Undefined% Atom Atom))
+(: __cetta_lib_seal_new-token-authority (-> Atom Atom Atom))
+(= (seal:new-token-authority $facet $nick)
+   (function (chain (eval (__cetta_lib_seal_new-token-authority $facet $nick)) $result (return $result))))
+
+(: seal:try-new-token-authority (-> %Undefined% Atom Atom))
+(: __cetta_lib_seal_try-new-token-authority (-> Atom Atom Atom))
+(= (seal:try-new-token-authority $facet $nick)
+   (function (chain (eval (__cetta_lib_seal_try-new-token-authority $facet $nick)) $result (return $result))))
+
+(: seal:token-mint (-> %Undefined% Atom))
+(: __cetta_lib_seal_token-mint (-> Atom Atom))
+(= (seal:token-mint $authority)
+   (function (chain (eval (__cetta_lib_seal_token-mint $authority)) $result (return $result))))
+
+(: seal:try-token-mint (-> %Undefined% Atom))
+(: __cetta_lib_seal_try-token-mint (-> Atom Atom))
+(= (seal:try-token-mint $authority)
+   (function (chain (eval (__cetta_lib_seal_try-token-mint $authority)) $result (return $result))))
+
+(: seal:token-attenuate (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_seal_token-attenuate (-> Atom Atom Atom))
+(= (seal:token-attenuate $token $caveat)
+   (function (chain (eval (__cetta_lib_seal_token-attenuate $token $caveat)) $result (return $result))))
+
+(: seal:try-token-attenuate (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_seal_try-token-attenuate (-> Atom Atom Atom))
+(= (seal:try-token-attenuate $token $caveat)
+   (function (chain (eval (__cetta_lib_seal_try-token-attenuate $token $caveat)) $result (return $result))))
+
+(: seal:token-challenge (-> %Undefined% Atom))
+(: __cetta_lib_seal_token-challenge (-> Atom Atom))
+(= (seal:token-challenge $authority)
+   (function (chain (eval (__cetta_lib_seal_token-challenge $authority)) $result (return $result))))
+
+(: seal:try-token-challenge (-> %Undefined% Atom))
+(: __cetta_lib_seal_try-token-challenge (-> Atom Atom))
+(= (seal:try-token-challenge $authority)
+   (function (chain (eval (__cetta_lib_seal_try-token-challenge $authority)) $result (return $result))))
+
+(: seal:token-revoke (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_seal_token-revoke (-> Atom Atom Atom))
+(= (seal:token-revoke $authority $root)
+   (function (chain (eval (__cetta_lib_seal_token-revoke $authority $root)) $result (return $result))))
+
+(: seal:try-token-revoke (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_seal_try-token-revoke (-> Atom Atom Atom))
+(= (seal:try-token-revoke $authority $root)
+   (function (chain (eval (__cetta_lib_seal_try-token-revoke $authority $root)) $result (return $result))))
+
+(: seal:token-verify (-> %Undefined% %Undefined% Atom Atom Atom))
+(: __cetta_lib_seal_token-verify (-> Atom Atom Atom Atom Atom))
+(= (seal:token-verify $authority $token $head $op)
+   (function (chain (eval (__cetta_lib_seal_token-verify $authority $token $head $op)) $result (return $result))))
+
+(: seal:try-token-verify (-> %Undefined% %Undefined% Atom Atom Atom))
+(: __cetta_lib_seal_try-token-verify (-> Atom Atom Atom Atom Atom))
+(= (seal:try-token-verify $authority $token $head $op)
+   (function (chain (eval (__cetta_lib_seal_try-token-verify $authority $token $head $op)) $result (return $result))))
+
+(: seal:token-head-add (-> %Undefined% %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_token-head-add (-> Atom Atom Atom Atom Atom))
+(= (seal:token-head-add $authority $token $space $atom)
+   (function (chain (eval (__cetta_lib_seal_token-head-add $authority $token $space $atom)) $result (return $result))))
+
+(: seal:try-token-head-add (-> %Undefined% %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_try-token-head-add (-> Atom Atom Atom Atom Atom))
+(= (seal:try-token-head-add $authority $token $space $atom)
+   (function (chain (eval (__cetta_lib_seal_try-token-head-add $authority $token $space $atom)) $result (return $result))))
+
+(: seal:token-head-remove (-> %Undefined% %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_token-head-remove (-> Atom Atom Atom Atom Atom))
+(= (seal:token-head-remove $authority $token $space $atom)
+   (function (chain (eval (__cetta_lib_seal_token-head-remove $authority $token $space $atom)) $result (return $result))))
+
+(: seal:try-token-head-remove (-> %Undefined% %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_seal_try-token-head-remove (-> Atom Atom Atom Atom Atom))
+(= (seal:try-token-head-remove $authority $token $space $atom)
+   (function (chain (eval (__cetta_lib_seal_try-token-head-remove $authority $token $space $atom)) $result (return $result))))

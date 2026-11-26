@@ -2335,7 +2335,7 @@ static void space_pinned_occurrences_roots(const TermUniverse *universe,
 /* CETTA_SPACE_READERS_REFERENCE: every removal copies its readers' view, as
  * before frozen views; the differential tests compare the two. */
 static bool space_readers_reference(void) {
-    static int reference = -1;
+    static _Thread_local int reference = -1;
     if (reference < 0)
         reference = getenv("CETTA_SPACE_READERS_REFERENCE") != NULL;
     return reference != 0;
@@ -3966,7 +3966,8 @@ static AtomId space_kept_occurrences_id(SpaceKeptOccurrences *kept, size_t i) {
 }
 
 static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor);
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order);
 
 /* The reading of a space's dependencies after its own rows: a member cursor
  * for each dependency over its own rows, each opened, and so pinned, with
@@ -4036,9 +4037,11 @@ static bool space_occurrence_composition_readable(const Space *s) {
  * relations hold.  Each dependency's rows come after both, then after the
  * rows and relation facts of the dependencies before.  The pattern decides
  * none of these bounds, and giving a relation's facts back to rows leaves
- * each sum of rows and facts the same. */
+ * each sum of rows and facts the same.  IN_ROW_ORDER: each dependency's rows
+ * are read in row order, as the space's own are. */
 static bool space_occurrence_composition_open(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor) {
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order) {
     if (!space_occurrence_composition_readable(s))
         return false;
     uint32_t dependencies = space_dependency_count(s);
@@ -4055,7 +4058,8 @@ static bool space_occurrence_composition_open(Space *s, Atom *pattern,
         space_occurrence_cursor_init_empty(&m->rows);
         c->len = d + 1u;
         if (!space_prepare_proof_read(dependency, pattern) ||
-            !space_occurrence_cursor_init_rows(dependency, pattern, &m->rows))
+            !space_occurrence_cursor_init_rows(dependency, pattern, &m->rows,
+                                               in_row_order))
             return false;
         m->begin = space_imported_length(dependency);
         m->base = base;
@@ -4067,20 +4071,27 @@ static bool space_occurrence_composition_open(Space *s, Atom *pattern,
 
 /* The rows the pattern may match, then the facts the space's relation for
  * it kept: the relation stays, and only the facts lent get records.  A space
- * with dependencies then lends each dependency's own rows. */
-bool space_occurrence_cursor_init(Space *s, Atom *pattern,
-                                  SpaceOccurrenceCursor *cursor) {
+ * with dependencies then lends each dependency's own rows.  IN_ROW_ORDER:
+ * the rows of the space and of each dependency are read in row order (an
+ * ordered kind's in its kind's order), whatever index selects them, and the
+ * relation the pattern names gives its facts back to the rows first, so
+ * every occurrence the cursor lends is a row. */
+static bool space_occurrence_cursor_open(Space *s, Atom *pattern,
+                                         SpaceOccurrenceCursor *cursor,
+                                         bool in_row_order) {
     if (!space_prepare_proof_read(s, pattern)) return false;
     /* Open the owner and all imported row views at one cut, before any
      * maintenance lock is taken. */
     CETTA_SCOPED_SPACE_OBSERVE(cursor_view, s);
-    SpaceKeptOccurrences *kept = space_dense_occurrences(s, pattern);
+    SpaceKeptOccurrences *kept =
+        in_row_order ? NULL : space_dense_occurrences(s, pattern);
     bool ok;
     if (!kept) {
-        ok = space_occurrence_cursor_init_rows(s, pattern, cursor);
+        ok = space_occurrence_cursor_init_rows(s, pattern, cursor,
+                                               in_row_order);
     } else {
         space_dense_reading_begin();
-        ok = space_occurrence_cursor_init_rows(s, pattern, cursor);
+        ok = space_occurrence_cursor_init_rows(s, pattern, cursor, false);
         space_dense_reading_end();
         if (!ok)
             space_kept_occurrences_release(kept);
@@ -4088,7 +4099,8 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
             cursor->kept = kept;
     }
     if (ok && space_has_dependencies(s) &&
-        !space_occurrence_composition_open(s, pattern, cursor)) {
+        !space_occurrence_composition_open(s, pattern, cursor,
+                                           in_row_order)) {
         space_occurrence_cursor_release(cursor);
         return false;
     }
@@ -4097,10 +4109,26 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     return ok;
 }
 
+bool space_occurrence_cursor_init(Space *s, Atom *pattern,
+                                  SpaceOccurrenceCursor *cursor) {
+    return space_occurrence_cursor_open(s, pattern, cursor, false);
+}
+
+bool space_occurrence_cursor_init_in_row_order(Space *s, Atom *pattern,
+                                               SpaceOccurrenceCursor *cursor) {
+    return space_occurrence_cursor_open(s, pattern, cursor, true);
+}
+
+CettaIndex space_occurrence_cursor_dependency_base(
+    const SpaceOccurrenceCursor *cursor) {
+    return cursor && cursor->composition
+        ? cursor->composition->first_base : UINT64_MAX;
+}
+
 SpaceMatchCursorStatus space_match_cursor_open(
     Space *s, Arena *arena, Atom *pattern, SpaceOccurrenceCursor *cursor,
     Atom **selector_out) {
-    Atom *selector = petta_semantics_match_index_pattern(arena, pattern, NULL);
+    Atom *selector = match_index_selector(arena, pattern, NULL);
     if (selector_out)
         *selector_out = selector;
     if (!selector)
@@ -4184,12 +4212,14 @@ static bool space_occurrence_cursor_init_ordered(Space *s, Atom *pattern,
 
 static int exact_index_row_compare(const void *left, const void *right);
 
-/* A flat read of a space whose kind orders its rows (a stack, a queue) takes
- * its candidates in that order, whatever index supplied them: the oldest
- * first, or the newest first for a stack. */
-static void space_occurrence_cursor_flat_in_kind_order(
+/* A flat read in row order (row_order), and a flat read of a space whose
+ * kind orders its rows (a stack, a queue), takes its candidates in that
+ * order, whatever index supplied them: the oldest first, or the newest first
+ * for a stack. */
+static void space_occurrence_cursor_flat_in_row_order(
         const Space *s, SpaceOccurrenceCursor *cursor) {
-    if (!space_rows_in_kind_order(s) || cursor->flat_len < 2u)
+    if ((!cursor->row_order && !space_rows_in_kind_order(s)) ||
+        cursor->flat_len < 2u)
         return;
     CettaIndex *rows = cursor->flat;
     CettaIndex n = cursor->flat_len;
@@ -4240,12 +4270,13 @@ static bool space_occurrence_cursor_copy_small_frontier(
     cursor->flat = rows;
     cursor->flat_len = count;
     cursor->flat_mode = true;
-    space_occurrence_cursor_flat_in_kind_order(space, cursor);
+    space_occurrence_cursor_flat_in_row_order(space, cursor);
     return true;
 }
 
 static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor) {
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order) {
     space_dense_settle_for_pattern(s, pattern);
     CETTA_SCOPED_SPACE_OBSERVE(transition, s);
     /* Registrations of readers are the space's derived state. */
@@ -4258,6 +4289,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
     space_linearize(s);
     cursor->space = s;
     cursor->descending = space_reads_newest_first(s);
+    cursor->row_order = in_row_order;
     if (s->kind == SPACE_KIND_PRIORITY)
         return space_occurrence_cursor_init_ordered(s, pattern, cursor);
     if (pattern->kind == ATOM_VAR ||
@@ -4268,7 +4300,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
     if (space_match_native_exact_occurrences(
             s, pattern, &cursor->flat, &cursor->flat_len)) {
         cursor->flat_mode = true;
-        space_occurrence_cursor_flat_in_kind_order(s, cursor);
+        space_occurrence_cursor_flat_in_row_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
@@ -4299,14 +4331,14 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
          space_path_index_prefix_candidates(s, pattern, true, &cursor->flat,
                                             &cursor->flat_len))) {
         cursor->flat_mode = true;
-        space_occurrence_cursor_flat_in_kind_order(s, cursor);
+        space_occurrence_cursor_flat_in_row_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
     if (!root)
         return false;
-    cursor->row_order = space_rows_in_kind_order(s);
+    cursor->row_order = in_row_order || space_rows_in_kind_order(s);
     DiscNodeSet final;
     dns_init(&final);
     disc_step(root, pattern, &final);
@@ -10315,6 +10347,7 @@ static void space_logical_positions_publish(
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     bool order_follows = space_order_forget_rows(s, rows, count);
     bool track_heads = space_theory_any_head_clocks_active();
+    bool removed_non_exact = false;
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
         /* The row leaves the match trie and the exact index now, so lookups
@@ -10322,6 +10355,8 @@ static void space_logical_positions_publish(
          * settle, and their reader drops marked rows. */
         AtomId atom_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        if (!atom_id_is_exact_indexable(s, atom_id))
+            removed_non_exact = true;
         if (track_heads)
             space_head_clocks_note_atom_and_importers_slow(
                 s, s, atom_id, NULL, CETTA_ATOM_ID_NONE,
@@ -10336,7 +10371,8 @@ static void space_logical_positions_publish(
             s->native.exact_idx_dirty = true;
         space_path_indexes_note_mark(s, rows[i], atom_id);
     }
-    s->native.has_non_exact_atoms_dirty = true;
+    if (removed_non_exact)
+        s->native.has_non_exact_atoms_dirty = true;
     if (presence_follows) {
         s->native.id_present_synced_len -= presence_removed;
         id_present_keys_compact(&s->native,
@@ -13115,6 +13151,8 @@ static void space_set_overlay_base(Space *space, const Space *base) {
     if (space_lifetime_rebase)
         space_lifetime_rebase(space, base);
     space->overlay_base = base;
+    if (base)
+        atomic_store_explicit(&space->has_user_theory, 1u, memory_order_relaxed);
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -13145,6 +13183,18 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
     dst->payload_export_owner_epoch = src->payload_export_owner_epoch;
     dst->alias_table = NULL;
     dst->head_clocks = NULL;
+    dst->imported_equation_revision = src->imported_equation_revision;
+    atomic_store_explicit(
+        &dst->has_user_theory,
+        atomic_load_explicit(&src->has_user_theory, memory_order_relaxed),
+        memory_order_relaxed);
+    if (space_theory_any_head_authority_seals_active()) {
+        struct SpaceHeadAuthoritySeals *taken = space_head_authority_seals_take(src);
+        if (taken) {
+            (void)space_head_authority_seals_merge(dst, taken);
+            space_head_authority_seals_free(taken);
+        }
+    }
 }
 
 static void space_reset_moved_from(Space *s) {
@@ -13156,8 +13206,12 @@ static void space_reset_moved_from(Space *s) {
     bool observed = space_identity_observed_by_programs(s);
     space_alias_table_free(s->alias_table);
     s->alias_table = NULL;
-    space_head_clocks_free(s->head_clocks);
-    s->head_clocks = NULL;
+    if (__builtin_expect(s->head_clocks != NULL, 0)) {
+        space_head_clocks_free(s->head_clocks);
+        s->head_clocks = NULL;
+    }
+    s->imported_equation_revision = 0u;
+    atomic_store_explicit(&s->has_user_theory, 0u, memory_order_relaxed);
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     /* Moving the payload ends the old source lifetime.  Re-establish every
@@ -13222,6 +13276,8 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     atomic_init(&s->equational_revision, 0u);
     s->alias_table = NULL;
     s->head_clocks = NULL;
+    atomic_init(&s->has_user_theory, 0u);
+    s->imported_equation_revision = 0u;
     s->declares_subtypes = false;
     atomic_init(&s->prefix_epoch, space_fresh_prefix_epoch());
     space_match_backend_init(s);
@@ -13344,6 +13400,8 @@ static void space_note_dependency_mutation(
         uint64_t cur = space_equation_revision(importer);
         atomic_store_explicit(&importer->equation_revision, cur + 1u,
                               memory_order_relaxed);
+        atomic_store_explicit(&importer->has_user_theory, 1u,
+                              memory_order_relaxed);
     }
     if ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
@@ -13389,8 +13447,12 @@ bool space_add_dependency(Space *importer, Space *dependency) {
     if (!space_proof_prepare_mutation(importer)) return false;
     /* A space that composes others keeps no relations. */
     space_dense_settle(importer, SYMBOL_ID_NONE);
-    return importer && !importer->module_own_view &&
-           space_add_dependency_link(importer, dependency);
+    bool linked = importer && !importer->module_own_view &&
+                  space_add_dependency_link(importer, dependency);
+    if (linked)
+        atomic_store_explicit(&importer->has_user_theory, 1u,
+                              memory_order_relaxed);
+    return linked;
 }
 
 /* A dependency contributes its own atoms: those after its imported prefix. */
@@ -13569,6 +13631,13 @@ bool space_mark_imported_prefix(Space *s) {
         return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     s->imported_len = space_length64(s);
+    uint64_t eq_rev = space_equation_revision(s);
+    s->imported_equation_revision =
+        eq_rev <= UINT32_MAX ? (uint32_t)eq_rev : UINT32_MAX;
+    atomic_store_explicit(
+        &s->has_user_theory,
+        (s->dep_count != 0u || s->overlay_base != NULL) ? 1u : 0u,
+        memory_order_relaxed);
     return true;
 }
 
@@ -13941,8 +14010,12 @@ void space_free(Space *s) {
     space_order_free(s);
     space_alias_table_free(s->alias_table);
     s->alias_table = NULL;
-    space_head_clocks_free(s->head_clocks);
-    s->head_clocks = NULL;
+    if (__builtin_expect(s->head_clocks != NULL, 0)) {
+        space_head_clocks_free(s->head_clocks);
+        s->head_clocks = NULL;
+    }
+    s->imported_equation_revision = 0u;
+    atomic_store_explicit(&s->has_user_theory, 0u, memory_order_relaxed);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.atom_id_width_bits = 0;
@@ -14188,6 +14261,35 @@ static Atom *space_indexed_occurrence_atom(
         : NULL;
 }
 
+/* A rule is read by every call of its head, and callers keep what they read
+ * of it (a program's candidate snapshots live across top-level forms): its
+ * atom is the term universe's persistent copy, kept for the entry's life, as
+ * every decoded atom was before decoded copies went into epochs. */
+static Atom *space_rule_atom_kept(const Space *s, AtomId id, Atom *atom) {
+    if (!atom || !s || !s->native.universe || id == CETTA_ATOM_ID_NONE ||
+        !term_universe_identity_is_decoded(atom->arena_id))
+        return atom;
+    Atom *kept = term_universe_get_pinned_atom(s->native.universe, id);
+    return kept ? kept : atom;
+}
+
+/* The rule at logical index IDX, from the space that holds its row. */
+static Atom *space_rule_atom_at64(const Space *s, CettaIndex idx) {
+    if (!s)
+        return NULL;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        if (idx < base_visible) {
+            CettaIndex raw = 0;
+            return space_overlay_visible_base_raw_index(s, idx, &raw)
+                ? space_rule_atom_at64(s->overlay_base, raw) : NULL;
+        }
+        return space_get_at64(s, idx);
+    }
+    return space_rule_atom_kept(s, space_get_atom_id_at64(s, idx),
+                                space_get_at64(s, idx));
+}
+
 bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
     unsigned admitted_forms, SpaceEquationOccurrence *out) {
     if (out)
@@ -14196,10 +14298,11 @@ bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
         return false;
     }
     Atom *equation = id.has_equation_id
-        ? term_universe_get_atom(
-              id.read.space->native.universe, id.equation_id)
+        ? space_rule_atom_kept(id.read.space, id.equation_id,
+              term_universe_get_atom(id.read.space->native.universe,
+                                     id.equation_id))
         : (id.logical_index < space_length64(id.read.space)
-               ? space_get_at64(id.read.space, id.logical_index)
+               ? space_rule_atom_at64(id.read.space, id.logical_index)
                : NULL);
     CettaRuleDescriptor rule;
     if (!cetta_rule_view(equation, admitted_forms, &rule) ||
@@ -15554,6 +15657,23 @@ static inline uint8_t space_mutation_projection_to_theory_roles(
     return roles;
 }
 
+static void space_head_clocks_notify_importers_rec(
+        Space *s, const SpaceHeadMutationNote *note, uint8_t roles,
+        uint32_t depth) {
+    if (!s || depth >= 16u)
+        return;
+    for (uint32_t i = 0u; i < s->importer_count; i++) {
+        Space *importer = s->importers[i];
+        if (!importer)
+            continue;
+        if (importer->head_clocks)
+            space_theory_note_mutation_slow(importer, note, roles);
+        if (importer->importer_count != 0u)
+            space_head_clocks_notify_importers_rec(
+                importer, note, roles, depth + 1u);
+    }
+}
+
 static __attribute__((noinline, cold)) void
 space_head_clocks_note_atom_and_importers_slow(
         Space *s, const Space *source, AtomId primary, const Atom *atom,
@@ -15570,11 +15690,8 @@ space_head_clocks_note_atom_and_importers_slow(
     uint8_t roles = space_mutation_projection_to_theory_roles(equation_projection);
     if (s->head_clocks)
         space_theory_note_mutation_slow(s, &note, roles);
-    for (uint32_t i = 0u; i < s->importer_count; i++) {
-        Space *importer = s->importers[i];
-        if (importer && importer->head_clocks)
-            space_theory_note_mutation_slow(importer, &note, roles);
-    }
+    if (s->importer_count != 0u)
+        space_head_clocks_notify_importers_rec(s, &note, roles, 0u);
 }
 
 static __attribute__((noinline, cold)) void
@@ -15590,11 +15707,8 @@ space_head_clocks_note_head_and_importers_slow(
     };
     if (s->head_clocks)
         space_theory_note_mutation_slow(s, &note, roles);
-    for (uint32_t i = 0u; i < s->importer_count; i++) {
-        Space *importer = s->importers[i];
-        if (importer && importer->head_clocks)
-            space_theory_note_mutation_slow(importer, &note, roles);
-    }
+    if (s->importer_count != 0u)
+        space_head_clocks_notify_importers_rec(s, &note, roles, 0u);
 }
 
 /* A module changed: every space importing it reads the change. */
@@ -15690,6 +15804,7 @@ static void space_publish_mutation_noted(
         }
         atomic_store_explicit(&s->equation_revision, cur + 1u,
                               memory_order_relaxed);
+        atomic_store_explicit(&s->has_user_theory, 1u, memory_order_relaxed);
         program_changed = true;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
@@ -16860,6 +16975,24 @@ Space *space_heap_clone_shallow(Space *src) {
         free(clone);
         return NULL;
     }
+    if (space_theory_any_head_authority_seals_active()) {
+        struct SpaceHeadAuthoritySeals *cloned =
+            space_head_authority_seals_clone_space(src);
+        if (cloned) {
+            bool merged = space_head_authority_seals_merge(clone, cloned);
+            space_head_authority_seals_free(cloned);
+            if (!merged) {
+                space_free(clone);
+                free(clone);
+                return NULL;
+            }
+        }
+    }
+    clone->imported_equation_revision = src->imported_equation_revision;
+    atomic_store_explicit(
+        &clone->has_user_theory,
+        atomic_load_explicit(&src->has_user_theory, memory_order_relaxed),
+        memory_order_relaxed);
     return clone;
 }
 
@@ -16922,9 +17055,22 @@ static void space_replace_contents_classified(
        stays, with the name's block, which space_free would give back. */
     CettaGeneratedName generated_name = dst->generated_name;
     dst->generated_name = (CettaGeneratedName){0};
+    struct SpaceHeadAuthoritySeals *dst_seals =
+        space_theory_any_head_authority_seals_active()
+            ? space_head_authority_seals_take(dst) : NULL;
+    uint32_t dst_imp_eq_rev = dst->imported_equation_revision;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
     dst->generated_name = generated_name;
+    if (dst_seals) {
+        (void)space_head_authority_seals_merge(dst, dst_seals);
+        space_head_authority_seals_free(dst_seals);
+    }
+    if (dst->imported_equation_revision == 0u)
+        dst->imported_equation_revision = dst_imp_eq_rev;
+    if (space_equation_revision(dst) != (uint64_t)dst->imported_equation_revision ||
+        dst->dep_count != 0u || dst->overlay_base != NULL)
+        atomic_store_explicit(&dst->has_user_theory, 1u, memory_order_relaxed);
     if (journal) {
         dst->journal = journal;
         CettaCount new_len = space_length64(dst);
@@ -19733,35 +19879,6 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
     return found;
 }
 
-bool space_match_exists_ground_exact_expression_coordinates(
-        Space *s, Atom *const *coordinates,
-        CettaExprLen coordinate_count, bool *out_applicable) {
-    if (out_applicable)
-        *out_applicable = false;
-    if (!s || coordinate_count == 0u || !coordinates ||
-        match_head_is_connective(coordinates[0]) ||
-        space_has_overlay_base(s) || space_has_dependencies(s) ||
-        space_engine_uses_pathmap(s->match_backend.kind) ||
-        !s->native.universe || !space_contains_only_exact_atoms(s)) {
-        return false;
-    }
-    for (CettaExprIndex index = 0u;
-         index < coordinate_count; index++) {
-        if (!atom_is_exact_indexable(coordinates[index]) ||
-            !space_match_ground_pattern_matches_by_identity(
-                coordinates[index]))
-            return false;
-    }
-    if (!id_present_sync(s))
-        return false;
-    AtomId query_id = term_universe_lookup_expression_coordinates(
-        s->native.universe, coordinates, coordinate_count);
-    if (out_applicable)
-        *out_applicable = true;
-    return query_id != CETTA_ATOM_ID_NONE &&
-        id_present_contains(&s->native, query_id);
-}
-
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
     if (out_applicable) *out_applicable = false;
     if (!space_prepare_proof_read(s, atom)) return false;
@@ -19896,7 +20013,7 @@ static bool exact_index_current(Space *s) {
     if (s->native.exact_idx_dirty) {
         if (!space_keeps_exact_index(s) ||
             s->native.secondary_index_deferral_depth > 0u ||
-            s->native.marked != 0u)
+            (s->native.marked != 0u && s->match_backend.native.frozen))
             return false;
         SPACE_MAINTAIN(maintenance, s);
         if (s->native.exact_idx_dirty)
@@ -21851,7 +21968,7 @@ static TypeStampSymbol *type_stamps_symbol(SymbolId symbol) {
  * `head` itself: no expression subject headed by it, no open row, no
  * headless row in the space. */
 bool space_type_rows_only_declare(Space *s, SymbolId head) {
-    if (!s || head == SYMBOL_ID_NONE)
+    if (!s || head == SYMBOL_ID_NONE || space_has_dependencies(s))
         return false;
     ensure_ty_ann_index(s);
     bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
@@ -21865,7 +21982,7 @@ bool space_type_rows_only_declare(Space *s, SymbolId head) {
 }
 
 bool space_type_rows_type_no_expression_of(Space *s, SymbolId head) {
-    if (!s || head == SYMBOL_ID_NONE)
+    if (!s || head == SYMBOL_ID_NONE || space_has_dependencies(s))
         return false;
     ensure_ty_ann_index(s);
     if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||

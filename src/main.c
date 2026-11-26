@@ -1904,6 +1904,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang petta --profile ai <file.metta> # sealed sorts: declarations type answers, not held calls\n", out);
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost|rhometta>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
+    fputs("       cetta --lang petta [--petta-linked-import|--no-petta-linked-import] <file.metta>"
+          " # import! loads each module once in its own linked space, or copies its atoms into the importer\n", out);
 #if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
     fputs("       cetta --lang <langdef> --langdef-proof-backend <authority|generated-relational-audit-v1|frame-cache-diagnostic-v1> <file>\n", out);
 #else
@@ -2328,7 +2330,7 @@ static bool main_petta_predeclare_forms(CettaLibraryContext *libraries,
             continue;
         }
         Atom *declaration =
-            term_universe_get_atom(cetta_library_context_universe(libraries), ids[index]);
+            term_universe_get_pinned_atom(cetta_library_context_universe(libraries), ids[index]);
         if (petta_program_admits_equation(libraries->petta_program,
                                           declaration) &&
             !petta_program_predeclare_equation(libraries->petta_program,
@@ -2473,6 +2475,10 @@ typedef enum {
     MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED,
 } MainPettaBlockLoadResult;
 
+static bool main_check_declaration_block_head_seals(
+        const Space *space, TermUniverse *universe,
+        const AtomId *atom_ids, int atom_count);
+
 static MainPettaBlockLoadResult main_petta_load_declaration_block(
     CettaLibraryContext *libraries, Space *space, Registry *registry,
     TermUniverse *universe, AtomId *atom_ids, int atom_count) {
@@ -2489,6 +2495,12 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     arena_init(&diagnostic_arena);
     if (atom_count > 0)
         space_dense_prepare_adds(space, atom_ids, (CettaCount)atom_count);
+    if (!main_check_declaration_block_head_seals(
+            space, universe, atom_ids, atom_count)) {
+        arena_free(&diagnostic_arena);
+        petta_program_declaration_block_free(block);
+        return MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED;
+    }
     for (int index = 0; ok && index < atom_count; index++) {
         /* A fact is only stored: the program reads equations and type
          * declarations, so nothing else is decoded for it. */
@@ -2499,7 +2511,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
             continue;
         }
         Atom *source =
-            term_universe_get_atom(universe, atom_ids[index]);
+            term_universe_get_pinned_atom(universe, atom_ids[index]);
         Atom *definition_error = eval_petta_builtin_definition_error(
             &diagnostic_arena, registry, space, source);
         if (definition_error) {
@@ -2528,6 +2540,36 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
 }
 
+static bool main_check_declaration_block_head_seals(
+        const Space *space, TermUniverse *universe,
+        const AtomId *atom_ids, int atom_count) {
+    if (!space_theory_any_head_authority_seals_active())
+        return true;
+    Arena diag;
+    arena_init(&diag);
+    for (int i = 0; i < atom_count; i++) {
+        Atom *source = term_universe_get_atom(universe, atom_ids[i]);
+        const char *reason = NULL;
+        if (source &&
+            !space_theory_atom_check_head_seal(space, source, NULL, &reason)) {
+            Atom *tag = atom_symbol(&diag, "SealFault");
+            Atom *detail = atom_symbol(&diag, reason ? reason : "head-sealed");
+            Atom *fault = (tag && detail) ? atom_expr2(&diag, tag, detail) : NULL;
+            Atom *err = fault ? atom_error(&diag, source, fault) : NULL;
+            fprintf(stderr, "error: ");
+            if (err)
+                atom_print(err, stderr);
+            else
+                fprintf(stderr, "(SealFault %s)", reason ? reason : "head-sealed");
+            fputc('\n', stderr);
+            arena_free(&diag);
+            return false;
+        }
+    }
+    arena_free(&diag);
+    return true;
+}
+
 static bool main_load_planned_declaration_block(
     PettaProgram *program, Space *space,
     TermUniverse *universe, AtomId *atom_ids, int atom_count) {
@@ -2535,6 +2577,9 @@ static bool main_load_planned_declaration_block(
         (atom_count > 0 && !atom_ids)) {
         return false;
     }
+    if (!main_check_declaration_block_head_seals(
+            space, universe, atom_ids, atom_count))
+        return false;
     PettaDeclarationBlock *block =
         petta_program_declaration_block_new(
             program, universe, atom_ids, atom_count);
@@ -2547,7 +2592,7 @@ static bool main_load_planned_declaration_block(
         if (!petta_program_form_id_may_affect_metadata(universe,
                                                        atom_ids[index]))
             continue;
-        Atom *source = term_universe_get_atom(
+        Atom *source = term_universe_get_pinned_atom(
             universe, atom_ids[index]);
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(block, index);
@@ -2861,6 +2906,7 @@ static int cetta_main(int argc, char **argv) {
     CettaCliEndpoint *current_endpoint = NULL;
     bool import_mode_overridden = false;
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    int petta_linked_import_override = -1;
     const char *filename = NULL;
     const char *inline_text = NULL;
     const char *presentation_syntax = NULL;
@@ -3361,6 +3407,14 @@ static int cetta_main(int argc, char **argv) {
                 return 2;
             }
             import_mode_overridden = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--petta-linked-import") == 0) {
+            petta_linked_import_override = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--no-petta-linked-import") == 0) {
+            petta_linked_import_override = 0;
             continue;
         }
         if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--expr") == 0) {
@@ -3894,6 +3948,9 @@ static int cetta_main(int argc, char **argv) {
     if (import_mode_overridden) {
         cetta_eval_session_set_relative_module_policy(&runtime.libraries.session, import_mode);
     }
+    if (petta_linked_import_override >= 0) {
+        runtime.libraries.petta_linked_import = (petta_linked_import_override != 0);
+    }
     if (prefer_rationals_cli) {
         cetta_eval_session_record_generic_setting(
             &runtime.libraries.session, "prefer-rationals",
@@ -4284,7 +4341,7 @@ static int cetta_main(int argc, char **argv) {
         Atom **forms = n > 0
             ? cetta_malloc(sizeof(*forms) * (size_t)n) : NULL;
         for (int index = 0; index < n; index++)
-            forms[index] = term_universe_get_atom(
+            forms[index] = term_universe_get_pinned_atom(
                 cetta_library_context_universe(&runtime.libraries), atom_ids[index]);
         CettaGsltLanguageResult observed = {0};
         CettaGsltHornLimits limits = {
@@ -4559,7 +4616,11 @@ process_petta_document:
                            n, block_end, NULL, NULL)) {
                     block_end++;
                 }
-                if (!space_add_atom_ids_batch(
+                if (!main_check_declaration_block_head_seals(
+                        &runtime.space,
+                        cetta_library_context_universe(&runtime.libraries),
+                        atom_ids + pi, block_end - pi) ||
+                    !space_add_atom_ids_batch(
                         &runtime.space, atom_ids + pi,
                         (CettaCount)(block_end - pi))) {
                     fprintf(stderr,
@@ -4578,6 +4639,9 @@ petta_next_slice:
     i = 0;
     while (i < n) {
         cleanup.atom_first = i;
+        /* A form begins: the earlier forms' results are dead, so the thread
+         * keeps no decoded copy of theirs (term_universe_decode_top_level_begin). */
+        term_universe_decode_top_level_begin();
         if (lang_is_mm2) {
             Atom *at = atoms[i];
 
@@ -4653,7 +4717,7 @@ petta_next_slice:
             }
             const PettaPlanNode *source_plan = NULL;
             if (lang->id == CETTA_LANGUAGE_PETTA) {
-                Atom *source = term_universe_get_atom(
+                Atom *source = term_universe_get_pinned_atom(
                     cetta_library_context_universe(&runtime.libraries), payload_id);
                 source_plan = source
                     ? petta_program_plan_current(
@@ -4928,9 +4992,13 @@ petta_next_slice:
                   runtime.libraries.petta_program, &runtime.space,
                   cetta_library_context_universe(&runtime.libraries), atom_ids + i,
                   block_end - i)
-            : space_add_atom_ids_batch(
-                  &runtime.space, atom_ids + i,
-                  (CettaCount)(block_end - i));
+            : (main_check_declaration_block_head_seals(
+                   &runtime.space,
+                   cetta_library_context_universe(&runtime.libraries),
+                   atom_ids + i, block_end - i) &&
+               space_add_atom_ids_batch(
+                   &runtime.space, atom_ids + i,
+                   (CettaCount)(block_end - i)));
         if (!loaded) {
             fprintf(stderr, "error: could not load declaration block\n");
             rc = 1;

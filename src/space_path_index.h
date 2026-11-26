@@ -10,7 +10,9 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
-    CETTA_SPACE_PATH_INTEGER_KEY,
+    /* A number: an integer's value, which a float exactly equal to an
+     * int64 shares (HE matches the two); any other float's bits. */
+    CETTA_SPACE_PATH_NUMBER_KEY,
     /* An ordinary ground term keyed by its structural hash. */
     CETTA_SPACE_PATH_TERM_KEY,
     /* The bound prefix after the head: a mix of the ids of the first
@@ -19,12 +21,16 @@ typedef enum {
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
- * one Space and one universe generation. It refutes candidates only; matching
- * still determines bindings, promotion, correlation and opaque equality.
- * Posting lists contain source occurrence positions, never representatives
- * of equal payloads. Queries merge a key's postings and uncertain rows in
- * ascending position order. Appends extend the index; prefix rewrites retire
- * it. Cursors own their selected positions independently of that retirement. */
+ * one Space and one universe generation and holds every row. It refutes
+ * candidates only; matching still determines bindings, promotion,
+ * correlation and opaque equality. An index at a path serves either the
+ * queries a symbol heads, keying a row by its head symbol, its length and
+ * its value at the path together, or every other query, keying a row by
+ * that value alone. Posting lists contain source occurrence positions, never
+ * representatives of equal payloads. Queries merge a key's postings and
+ * uncertain rows in ascending position order. Appends extend the index;
+ * prefix rewrites retire it. Cursors own their selected positions
+ * independently of that retirement. */
 typedef struct {
     size_t index_count;
     size_t retained_bytes;
@@ -55,6 +61,15 @@ static inline bool space_path_index_leads(const Atom *pattern) {
  * cutting a deep constant to the trie's wildcard. */
 bool space_path_index_term_key_admits(const Atom *element);
 
+/* Whether a pattern element is a value a position index keys by itself:
+ * a symbol, a string, an integer or a float. */
+static inline bool space_path_index_scalar_key_admits(const Atom *element) {
+    return element && (element->kind == ATOM_SYMBOL ||
+        (element->kind == ATOM_GROUNDED &&
+         (element->ground.gkind == GV_INT || element->ground.gkind == GV_FLOAT ||
+          element->ground.gkind == GV_STRING)));
+}
+
 /* A scalar prefix needs no second access path. Keep this admission test a
  * leaf; only nested patterns enter the explicit coordinate walker. */
 static inline bool space_path_index_may_select(const Atom *pattern) {
@@ -65,8 +80,7 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
     for (CettaExprIndex position = CETTA_INDEX_CHILD_TOKEN_LIMIT;
          position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
-        if (child && (child->kind == ATOM_SYMBOL ||
-            (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+        if (space_path_index_scalar_key_admits(child))
             return true;
     }
     for (CettaExprIndex position = 1u; position < pattern->expr.len; position++) {
@@ -76,15 +90,13 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
             return true;
     }
     /* A two-coordinate bound prefix followed by one free scalar: the bound
-     * field's position index answers it when that field is a symbol or an
-     * integer; a ground nested prefix stays with the trie. */
+     * field's position index answers it when that field is a scalar it
+     * keys; a ground nested prefix stays with the trie. */
     if (pattern->expr.len == 3u && pattern->expr.elems[2] &&
         pattern->expr.elems[2]->kind == ATOM_VAR &&
         !atom_has_vars(pattern->expr.elems[0]) &&
         !atom_has_vars(pattern->expr.elems[1]))
-        return pattern->expr.elems[1]->kind == ATOM_SYMBOL ||
-            (pattern->expr.elems[1]->kind == ATOM_GROUNDED &&
-             pattern->expr.elems[1]->ground.gkind == GV_INT);
+        return space_path_index_scalar_key_admits(pattern->expr.elems[1]);
     for (CettaExprIndex position = 0u; position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
         if (!atom_has_vars(child))
@@ -99,8 +111,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
         for (CettaExprIndex suffix = position + 1u;
              suffix < pattern->expr.len; suffix++) {
             child = pattern->expr.elems[suffix];
-            if (child && (child->kind == ATOM_EXPR || child->kind == ATOM_SYMBOL ||
-                    (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+            if (child && (child->kind == ATOM_EXPR ||
+                          space_path_index_scalar_key_admits(child)))
                 return true;
         }
         return false;
@@ -110,11 +122,6 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
 
 bool space_path_index_candidates(
     Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
-/* The rows of a pattern's head that its first bound column after the head
- * keys (a symbol, an integer or a ground symbolic term) admits, from that
- * column's index: an exact count's candidates, however broad, with no trie.
- * The index is built when `build` asks; false when no column is keyed or
- * the Space keeps no such index. */
 /* The index serving a read of PATTERN, as the read's demand of it (the
  * caller's to free()), with *PRICE the rows it would hand over, counted
  * without reading them: the shortest offer among those kept for a flat
@@ -136,6 +143,11 @@ CettaSpacePathDemand *space_path_index_demand_copy(
     const CettaSpacePathDemand *demand);
 /* ROWS read by a walk for want of an index (space_path_index_offer). */
 void space_path_index_rent(Space *space, CettaCount rows);
+/* The rows of a pattern's head that its first bound column after the head
+ * keys (a symbol, an integer or a ground symbolic term) admits, from that
+ * column's index: an exact count's candidates, however broad, with no trie.
+ * The index is built when `build` asks; false when no column is keyed or
+ * the Space keeps no such index. */
 bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
                                       CettaIndex **out, CettaIndex *count);
 /* The rows of a pattern's head whose first columns hold the pattern's bound
@@ -143,7 +155,9 @@ bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
  * symbols), with the rows open there: a hash probe of the index kept for
  * that prefix's length, built when `build` asks, where the trie would
  * descend the prefix holding every row of the space.  False when the
- * pattern binds no prefix or the Space keeps no such index. */
+ * pattern binds no prefix, the Space keeps no such index, or the probe
+ * would read more rows open in the prefix than rows its key holds, beyond
+ * a few: those the trie descends by their shape. */
 bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
                                         CettaIndex **out, CettaIndex *count);
 /* space_path_index_prefix_candidates, building the index, for a flat

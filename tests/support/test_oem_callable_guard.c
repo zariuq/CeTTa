@@ -2,6 +2,12 @@
  * Link-time section collection removes unused runtime entry points. */
 #include "../../src/open_equation_machine.c"
 #include "../test_runtime_stats_stubs.h"
+
+/* This test links no term universe: nothing here is a decoded copy. */
+bool term_universe_identity_is_decoded(uint32_t identity) {
+    (void)identity;
+    return false;
+}
 #include <assert.h>
 
 static uint64_t checks;

@@ -139,8 +139,10 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
     CettaSpacePathIndexInfo info;
     assert(space_path_indexes_info(&space, &info));
     assert(info.index_count == 1u && info.path_length == 1u);
-    assert(info.key_kind == CETTA_SPACE_PATH_INTEGER_KEY);
-    assert(info.uncertain_rows == 5u && info.keyed_rows == 128u);
+    assert(info.key_kind == CETTA_SPACE_PATH_NUMBER_KEY);
+    /* The floats are keyed by their values; the correlated row, the whole
+     * variable and the string stay open. */
+    assert(info.uncertain_rows == 3u && info.keyed_rows == 130u);
     for (int64_t key = 0; key < 19; key++)
         compare_reference(&space, arena,
             row(arena, head, atom_var(arena, "path-output"), atom_int(arena, key)));
@@ -173,7 +175,7 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
      * row in and the removed one out, and it answers as the reference does. */
     assert(space_path_indexes_info(&space, &info));
     assert(info.index_count == 1u && info.path_length == 1u);
-    assert(info.key_kind == CETTA_SPACE_PATH_INTEGER_KEY);
+    assert(info.key_kind == CETTA_SPACE_PATH_NUMBER_KEY);
     assert(info.uncertain_rows + info.keyed_rows == 5u + 128u);
     compare_reference(&space, arena, query);
     space_occurrence_cursor_release(&first);
@@ -221,8 +223,8 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
     add(&space, unknown_head);
     add(&space, atom_var(arena, "prefix-refinement-whole"));
     add(&space, row(arena, head, open, open));
-    /* A keyed row with a different constructor remains the full matcher's
-     * responsibility when early refinement is restricted to uncertainty. */
+    /* A keyed row of another head holds the query's key at the column, but
+     * the index keys it by its head too: the query never reads it. */
     add(&space, row(arena, other, atom_int(arena, 701), atom_int(arena, 7)));
     add(&space, atom_expr3(arena,
         atom_var(arena, "prefix-refinement-open-head"), atom_int(arena, 702),
@@ -232,15 +234,17 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
                       atom_int(arena, 7));
     CettaIndex *positions = NULL, count = 0u;
     assert(space_path_index_candidates(&space, query, &positions, &count));
-    assert(count == 13u);
-    /* Eight matching ground occurrences, then the variable-headed row,
-     * whole-row variable and correlated row of the right constructor. */
+    assert(count == 12u);
+    /* Eight matching ground occurrences, then the variable-headed row, the
+     * whole-row variable, the correlated row of the right constructor and
+     * the variable-headed row open at the column, which matches. */
     for (CettaIndex index = 0u; index < 8u; index++)
         assert(positions[index] == 7u + 17u * index);
     assert(positions[8] == 192u && positions[9] == 193u && positions[10] == 194u);
-    assert(positions[11] == 195u);
-    assert(positions[12] == 196u);
-    assert(!direct_match(&space, arena, query, positions[11]));
+    assert(positions[11] == 196u);
+    assert(direct_match(&space, arena, query, positions[11]));
+    for (CettaIndex index = 0u; index < count; index++)
+        assert(positions[index] != 195u);
     free(positions);
     compare_reference(&space, arena, query);
     /* A variable query head cannot refute the other constructor's rows. */

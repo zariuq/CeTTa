@@ -44,6 +44,7 @@ tests/he_e1_kb_write.metta	he	metta	extended	main	native	test	golden	-
 tests/he_e2_states.metta	he	metta	extended	main	native	test	golden	-
 tests/he_e3_match_states.metta	he	metta	extended	main	native	test	golden	-
 tests/he_g1_docs.metta	he	metta	extended	main	native	test	golden	-
+tests/petta/path_index_open_heads.metta	petta	metta		main	native	test	golden	open rows of a head stay candidates after another head files open rows
 tests/petta/source_budget_computed_pattern.metta	petta	metta		main	native	test	golden	computed-pattern effects and canonical source-budget prefixes
 tests/petta/source_budget_native_directive.metta	petta	metta		main	native	test	golden	native directive admission preserves canonical source budgets
 tests/prime/authored_frontier_chaining.metta	prime	metta		any	native	test-prime	golden	Prime authored bounded-chaining integration canary with independent kernel checking
@@ -526,6 +527,7 @@ tests/test_open_equation_subst_index.metta	he	metta	extended	main	native	test	go
 tests/test_ordered_backend_admission.metta	he	metta	extended	main	native	test	golden	-
 tests/test_outcome_variant_composition_regression.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_outcome_variant_observation_seam_regression.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_path_index_open_heads.metta	he	metta	extended	main	native	test	golden	-
 tests/test_path_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pathmap_backend_primary_destructive_regression.metta	he	metta	extended	pathmap	pathmap	probe-pathmap-lane	probe	pathmap destructive syntax diagnostic
 tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression

@@ -108,6 +108,9 @@ typedef struct HeCanonicalFrame {
     bool match_certifying;
     /* The certificate failed once: the chain runs on the source schedule. */
     bool match_uncertified;
+    /* A one-pattern match reads its rows through a scan, one row each time
+     * a body is reached; NULL when its rows were read at once. */
+    MatchScanState *match_scan;
     DeferredSpaceSet deferred_spaces;
     CettaOwnedFrameStack instructions;
     CettaEvaluatorOptions *saved_options;
@@ -263,10 +266,21 @@ static void he_delivery_truncate(HeDelivery *d, CettaCount start) {
         d->odd_len--;
 }
 
+/* A match frame's scan, its pins released. */
+static void he_canonical_match_scan_close(HeCanonicalFrame *frame) {
+    if (!frame->match_scan)
+        return;
+    space_match_scan_release(&frame->match_scan->scan);
+    bindings_free(&frame->match_scan->reader.met);
+    free(frame->match_scan);
+    frame->match_scan = NULL;
+}
+
 /* Release a frame that has left the stack: restore what it saved, drop a
  * relay's unpublished range, and return its memory to the driver. */
 static void he_canonical_release(HeCanonicalFrame *frame) {
     frame->active = false;
+    he_canonical_match_scan_close(frame);
     if (frame->saved_context) {
         *active_eval_options() = frame->saved_context->options;
         g_metta_eval_depth = frame->saved_context->depth;
@@ -2312,6 +2326,22 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
             registers->prefix[i] = atom_space(a, steps[i].space);
         }
     }
+    /* One pattern: its rows are read through a scan, each when its body is
+     * reached.  The scan reads the space as it stood now, as a read of
+     * every row would, whatever the bodies write. */
+    if (!frame->sourced_match && registers->len == 1u &&
+        !match_pattern_is_connective(registers->source[0])) {
+        MatchScanState *state = cetta_malloc(sizeof(*state));
+        if (state && match_scan_open(frame->match_spaces[0], a,
+                                     registers->source[0], NULL,
+                                     &state->scan, &state->reader)) {
+            frame->match_scan = state;
+            frame->phase = 3u;
+            frame->index = 0u;
+            return;
+        }
+        free(state);
+    }
     Bindings empty;
     bindings_init(&empty);
     outcome_set_add(&frame->work, atom_unit(a), &empty);
@@ -2442,6 +2472,7 @@ static void he_canonical_resume_space(HeCanonicalFrame *frame) {
  * so far only answered, so the answers are dropped, and the chain is planned
  * again from its first leg on the source schedule. */
 static void he_canonical_match_replan(HeCanonicalFrame *frame) {
+    he_canonical_match_scan_close(frame);
     if (frame->relay_redirected)
         he_delivery_truncate(frame->delivery, frame->range_start);
     else {
@@ -2503,7 +2534,32 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
         frame->phase = 1u;
         return;
     }
-    if (frame->phase == 3u) {
+    if (frame->phase == 3u && frame->match_scan) {
+        /* The pattern is the frame's register, which a collection keeps
+         * current. */
+        MatchScanState *state = frame->match_scan;
+        state->reader.pattern = registers->source[0];
+        state->reader.arena = a;
+        Bindings row;
+        SpaceMatchScanStep step =
+            match_scan_next(&state->scan, &state->reader, &row);
+        if (step != SPACE_MATCH_SCAN_ROW) {
+            he_canonical_match_scan_close(frame);
+            if (step == SPACE_MATCH_SCAN_END) {
+                he_relay_finish(frame, &frame->paths, false, false);
+                he_canonical_pop();
+            } else {
+                /* The read could not go on: the match cannot be
+                 * completed. */
+                eval_mark_interrupted(match_scan_incompletion(step));
+            }
+            return;
+        }
+        outcome_set_add(&frame->child, atom_unit(a), &row);
+        bindings_free(&row);
+        frame->head_index = 0u;
+        frame->phase = 4u;
+    } else if (frame->phase == 3u) {
         if (frame->index == frame->work.len) {
             he_relay_finish(frame, &frame->paths, false, false);
             he_canonical_pop();

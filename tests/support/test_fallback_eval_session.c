@@ -465,7 +465,6 @@ static bool space_module_dependency_contract(void) {
     MODULE_CHECK(module_native_query(&top, &scratch, "(dep-fact $x)",
                                      &native_answers) ==
                  CETTA_NATIVE_QUERY_DECLINED);
-    MODULE_CHECK(!space_match_backend_supports_seeded_candidates(&top));
     bool applicable = true;
     (void)space_match_exists_ground_exact(
         &top, module_atom(&scratch, "(dep-fact a)"), &applicable);

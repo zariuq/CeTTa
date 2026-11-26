@@ -46,18 +46,18 @@
 
 /* A sanitizer keeps memory of its own: AddressSanitizer quarantines what is
    freed, and ThreadSanitizer shadows what is touched and keeps state for
-   each thread.  Under one the peak RSS measures the sanitizer, not the run,
-   so it is checked in builds without one; the census checks hold in every
-   build. */
+   each thread, and the allocator is the sanitizer's.  Under one the heap and
+   the peak RSS measure the sanitizer, not the run, so they are checked in
+   builds without one; the census checks hold in every build. */
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-#define RSS_MEASURES_THE_RUN 0
+#define MEMORY_MEASURES_THE_RUN 0
 #elif defined(__has_feature)
 #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
-#define RSS_MEASURES_THE_RUN 0
+#define MEMORY_MEASURES_THE_RUN 0
 #endif
 #endif
-#ifndef RSS_MEASURES_THE_RUN
-#define RSS_MEASURES_THE_RUN 1
+#ifndef MEMORY_MEASURES_THE_RUN
+#define MEMORY_MEASURES_THE_RUN 1
 #endif
 
 static int g_failures;
@@ -320,12 +320,18 @@ static void test_memory(Atom *loop) {
           (unsigned long long)census[2][0].regions_made,
           (unsigned long long)census[2][3].regions_made);
     CHECK(scratch_ok, "the workers' scratch does not grow with the COMMs");
+#if !MEMORY_MEASURES_THE_RUN
+    printf("NOTE: heap and peak RSS are not the loop's own under a sanitizer "
+           "(%zu -> %zu bytes, %ld -> %ld KiB)\n",
+           heap_small, heap_large, rss_small, rss_large);
+#else
     CHECK(heap_large <= heap_small + 64u * 1024u,
           "a run of 10^6 COMMs leaves the heap where 10^5 left it (%zu -> "
           "%zu bytes)", heap_small, heap_large);
-    CHECK(!RSS_MEASURES_THE_RUN || rss_large <= rss_small + 4096,
+    CHECK(rss_large <= rss_small + 4096,
           "a run of 10^6 COMMs leaves the peak RSS where 10^5 left it "
           "(%ld -> %ld KiB)", rss_small, rss_large);
+#endif
     CHECK(cetta_name_supply_live_blocks() == 0u,
           "the loop's supplies never leave the root block");
     printf("PASS: the duplicator loop on 1, 2 and 4 workers, 10^3 to 10^6 "

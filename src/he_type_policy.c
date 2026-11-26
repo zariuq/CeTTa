@@ -372,11 +372,20 @@ Atom *he_library_declaration_at(size_t index) {
         ? g_he_library_declarations[index] : NULL;
 }
 
+static inline bool he_library_subject_matches(const Atom *decl_subject,
+                                              const Atom *subject) {
+    if (subject->kind == ATOM_SYMBOL)
+        return decl_subject->kind == ATOM_SYMBOL &&
+               decl_subject->sym_id == subject->sym_id;
+    return atom_eq((Atom *)decl_subject, (Atom *)subject);
+}
+
 bool he_library_names_subject(const Atom *subject) {
     if (!subject || !he_library_tables_init())
         return false;
     for (size_t i = 0u; i < HE_LIBRARY_DECLARATION_COUNT; i++) {
-        if (atom_eq(g_he_library_declarations[i]->expr.elems[1], (Atom *)subject))
+        if (he_library_subject_matches(
+                g_he_library_declarations[i]->expr.elems[1], subject))
             return true;
     }
     if (subject->kind != ATOM_SYMBOL)
@@ -393,7 +402,8 @@ bool he_library_declares(const Atom *subject) {
     if (!subject || !he_library_tables_init())
         return false;
     for (size_t i = 0u; i < HE_LIBRARY_DECLARATION_COUNT; i++) {
-        if (atom_eq(g_he_library_declarations[i]->expr.elems[1], (Atom *)subject))
+        if (he_library_subject_matches(
+                g_he_library_declarations[i]->expr.elems[1], subject))
             return true;
     }
     return false;
@@ -405,7 +415,7 @@ bool he_library_declares_arity(const Atom *subject, CettaExprLen arity) {
     for (size_t i = 0u; i < HE_LIBRARY_DECLARATION_COUNT; i++) {
         Atom *declaration = g_he_library_declarations[i];
         Atom *type = declaration->expr.elems[2];
-        if (atom_eq(declaration->expr.elems[1], (Atom *)subject) &&
+        if (he_library_subject_matches(declaration->expr.elems[1], subject) &&
             type->kind == ATOM_EXPR && type->expr.len == arity + 2u &&
             atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
             return true;

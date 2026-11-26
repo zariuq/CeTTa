@@ -40,6 +40,11 @@
 #include "state_cell.h"
 #include "u64_index.h"
 #include "space_type_evidence.h"
+#include "space_match_scan.h"
+#include "native/tcalc/tcalc_cetta_module.h"
+
+extern struct CettaLibraryContext *eval_current_library_context(void) __attribute__((weak));
+extern int eval_current_effective_fuel_limit(void) __attribute__((weak));
 
 #pragma weak state_cell_pressure_observer_new
 #pragma weak state_cell_pressure_observer_free
@@ -980,6 +985,9 @@ typedef struct {
             PettaOpenAnswers *open;
             uint32_t open_base;
             bool open_borrowed;
+            /* This machine's decoded-copy epochs at `heap_mark`: a reclaim
+             * of the open call's goal returns to that mark, and to these. */
+            TermUniverseDecodeMark decode_mark;
             /* During a nursery evacuation: the open call's variables in
              * tenured storage, installed only when the evacuation commits. */
             Atom **open_moved_vars;
@@ -1035,9 +1043,12 @@ typedef struct {
             BindingSet binding_snapshot;
             bool binding_snapshot_mode;
             bool snapshot_mode;
-            SpaceOccurrenceCursor occurrences;
-            bool occurrence_cursor_mode;
-            bool occurrence_exhausted;
+            /* The scan of the space's rows the pattern may meet
+             * (space_match_scan), while scan_mode; scan_exhausted once it
+             * has read its last row. */
+            SpaceMatchScan scan;
+            bool scan_mode;
+            bool scan_exhausted;
             Atom *pattern;
             /* SubstitutionAlgebra force of `pattern` at pin time.  Unbound
              * variables keep their authored identity; later occurrences
@@ -1408,6 +1419,9 @@ typedef struct {
     Bindings environment;
     PettaMachineStep step;
     uint64_t started_ns;
+    /* The machine has run in this pull: a later step continues it after
+     * its own child request, which no consumer saw. */
+    bool entered;
 } PettaPullFrame;
 
 /* A private request has no returned environment. A completed child pull,
@@ -1446,6 +1460,15 @@ struct PettaMachineImpl {
      */
     Arena heap;
     Arena tenured;
+    /* The decoded-copy epochs the run held whenever this machine was pulled
+     * by its consumer or handed it a step: what crossed to the consumer, or
+     * what the consumer kept while this machine waited, may name them.  A
+     * reclaim of this machine's heap never drops them
+     * (petta_machine_open_resume).  Only an open call's choice reclaims to a
+     * mark, which keeps all the run held when it was made, so the floor is
+     * kept from this machine's first such choice on (decode_floor_kept). */
+    uint64_t decode_floor;
+    bool decode_floor_kept;
     /* Revision-pinned equation discrimination may instantiate one bounded
      * compiled body for observation, but no pointer from this arena escapes
      * the selection step. */
@@ -5624,9 +5647,9 @@ static void petta_choice_release(
         if (choice->as.match.point_held)
             space_entry_release(space_mutation_target(choice->as.match.space));
         choice->as.match.point_held = false;
-        space_occurrence_cursor_release(&choice->as.match.occurrences);
-        choice->as.match.occurrence_cursor_mode = false;
-        choice->as.match.occurrence_exhausted = false;
+        space_match_scan_release(&choice->as.match.scan);
+        choice->as.match.scan_mode = false;
+        choice->as.match.scan_exhausted = false;
         choice->as.match.resolved_pattern = NULL;
         binding_set_free(&choice->as.match.binding_snapshot);
         choice->as.match.binding_snapshot_mode = false;
@@ -5974,8 +5997,8 @@ static bool petta_choice_exhausted_after_success(
          * invalidation witness even after its current last row, so mutation
          * cannot silently turn invalidation into ordinary exhaustion.
          */
-        if (choice->as.match.occurrence_cursor_mode)
-            return choice->as.match.occurrence_exhausted;
+        if (choice->as.match.scan_mode)
+            return choice->as.match.scan_exhausted;
         if (choice->as.match.binding_snapshot_mode)
             return choice->as.match.next_index >=
                    choice->as.match.binding_snapshot.len;
@@ -8411,7 +8434,7 @@ static bool petta_choice_heap_evacuation_supported(
             choice->as.outcomes.prefer_success;
         bool occurrence_query = choice->kind == PETTA_CHOICE_MATCH &&
             choice->as.match.pattern_query &&
-            choice->as.match.occurrence_cursor_mode &&
+            choice->as.match.scan_mode &&
             choice->as.match.snapshot_len == 0u &&
             choice->as.match.binding_snapshot.len == 0u &&
             !choice->as.match.binding_snapshot_mode;
@@ -9036,8 +9059,7 @@ static bool petta_machine_owned_profile_supported(
             return false;
         }
         if (choice->kind == PETTA_CHOICE_MATCH) {
-            const SpaceOccurrenceCursor *cursor =
-                &choice->as.match.occurrences;
+            const SpaceMatchScan *scan = &choice->as.match.scan;
             if (!choice->as.match.space ||
                 !choice->as.match.snapshot_mode ||
                 !choice->as.match.pattern ||
@@ -9047,11 +9069,11 @@ static bool petta_machine_owned_profile_supported(
                  !choice->as.match.snapshot) ||
                 (choice->as.match.binding_snapshot.len != 0u &&
                  !choice->as.match.binding_snapshot.items) ||
-                (choice->as.match.occurrence_cursor_mode &&
-                 (!cursor->pinned ||
-                  cursor->space != choice->as.match.space)) ||
-                (!choice->as.match.occurrence_cursor_mode &&
-                 cursor->pinned)) {
+                (choice->as.match.scan_mode &&
+                 (!space_match_scan_is_open(scan) ||
+                  space_match_scan_space(scan) != choice->as.match.space)) ||
+                (!choice->as.match.scan_mode &&
+                 space_match_scan_is_open(scan))) {
                 return false;
             }
         } else if (choice->kind == PETTA_CHOICE_SUPERPOSE) {
@@ -9125,9 +9147,8 @@ static void petta_owned_continuation_choices_free(
             binding_set_free(
                 &choices[i].as.match.binding_snapshot);
             choices[i].as.match.binding_snapshot_mode = false;
-            space_occurrence_cursor_release(
-                &choices[i].as.match.occurrences);
-            choices[i].as.match.occurrence_cursor_mode = false;
+            space_match_scan_release(&choices[i].as.match.scan);
+            choices[i].as.match.scan_mode = false;
         }
     }
     free(choices);
@@ -9155,8 +9176,7 @@ static bool petta_owned_continuation_choices_clone(
                     space_mutation_target((*out)[i].as.match.space));
             binding_set_init(
                 &(*out)[i].as.match.binding_snapshot);
-            space_occurrence_cursor_init_empty(
-                &(*out)[i].as.match.occurrences);
+            space_match_scan_init_empty(&(*out)[i].as.match.scan);
             if (source[i].as.match.snapshot_len != 0u) {
                 if (!source[i].as.match.snapshot ||
                     source[i].as.match.snapshot_len >
@@ -9185,10 +9205,9 @@ static bool petta_owned_continuation_choices_clone(
                     return false;
                 }
             }
-            if (source[i].as.match.occurrence_cursor_mode &&
-                !space_occurrence_cursor_clone(
-                    &source[i].as.match.occurrences,
-                    &(*out)[i].as.match.occurrences)) {
+            if (source[i].as.match.scan_mode &&
+                !space_match_scan_clone(&source[i].as.match.scan,
+                                        &(*out)[i].as.match.scan)) {
                 petta_owned_continuation_choices_free(*out, i + 1u);
                 *out = NULL;
                 return false;
@@ -11721,6 +11740,60 @@ static bool petta_machine_match_epoch_candidate(
         bindings_builder_rollback(builder, mark);
     return petta_machine_finish_unification(
         machine, builder, growth_before, heap_before, matched);
+}
+
+/* PeTTa's matcher for a match choice's scan (space_match_scan_next): the
+ * row as a view in the heap, renamed apart, unified with the choice's
+ * pattern on the live trail.  A row the pattern does not meet rolls its
+ * bindings back, so nothing refers to what the try built. */
+typedef struct {
+    PettaMachineImpl *machine;
+    PettaChoice *choice;
+    PettaMachineStep *failure;
+} PettaMatchRowTry;
+
+static SpaceMatchRowVerdict petta_machine_match_row(
+    void *raw, const SpaceMatchScan *scan, SpaceMatchScanRow row) {
+    PettaMatchRowTry *try = raw;
+    PettaMachineImpl *machine = try->machine;
+    PettaChoice *choice = try->choice;
+    Atom *candidate = space_match_scan_row_view(scan, &machine->heap, row);
+    if (!candidate)
+        return SPACE_MATCH_ROW_UNMET;
+    petta_machine_trace_atom(
+        "[petta-machine] match candidate ", candidate);
+    machine->stats.match_candidates++;
+    bool matched = false;
+    Atom *authored = choice->as.match.pattern;
+    Atom *match_pattern = choice->as.match.resolved_pattern
+        ? choice->as.match.resolved_pattern
+        : authored;
+    if (match_pattern != authored)
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
+    if (petta_machine_match_candidate_by_structure(
+            authored, match_pattern, candidate)) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+        CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
+        if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch)) {
+            *try->failure = PETTA_MACHINE_STEP_CAPACITY;
+            return SPACE_MATCH_ROW_FAILED;
+        }
+        matched = petta_machine_match_epoch_candidate(
+            machine, match_pattern, candidate, epoch);
+    } else {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+        Atom *fresh = atom_has_vars(candidate)
+            ? petta_machine_freshen_in_scope(
+                  machine, candidate, &frame_identity_scope)
+            : candidate;
+        if (!fresh) {
+            *try->failure = PETTA_MACHINE_STEP_CAPACITY;
+            return SPACE_MATCH_ROW_FAILED;
+        }
+        matched = petta_machine_unify(machine, match_pattern, fresh);
+    }
+    return matched ? SPACE_MATCH_ROW_MET : SPACE_MATCH_ROW_UNMET;
 }
 
 static bool petta_machine_push_dispatch_handler(
@@ -22156,7 +22229,7 @@ static bool petta_machine_advance_choice(
         return petta_machine_resume_answer_choice(
             machine, choice, failure, false);
     if (!choice->as.match.snapshot_mode &&
-        !choice->as.match.occurrence_cursor_mode) {
+        !choice->as.match.scan_mode) {
         bool current = false;
         {
             /* Whether the choice's rows are still the space's: one read of
@@ -22169,106 +22242,59 @@ static bool petta_machine_advance_choice(
             return false;
         }
     }
-    if (choice->as.match.occurrence_cursor_mode) {
-        /* The rows are read by id, each a view built in the heap, which
-         * backtracking and the heap's collections reclaim.  A strict space's
-         * rows are rented; another space's row is kept from its fourth read.
-         * A pattern query's candidate is the universe's atom instead:
-         * petta_machine_pattern_candidate first returns the heap to the
-         * choice's mark, which would take a view built here with it. */
-        const TermUniverse *universe =
-            space_occurrence_cursor_universe(&choice->as.match.occurrences);
-        for (;;) {
-            CettaIndex candidate_index = 0u;
-            AtomId stored = CETTA_ATOM_ID_NONE;
-            SpaceOccurrenceCursorStep step =
-                space_occurrence_cursor_next_id(
-                    &choice->as.match.occurrences, &candidate_index, &stored);
-            if (step == SPACE_OCCURRENCE_CURSOR_END) {
-                choice->as.match.occurrence_exhausted = true;
-                return false;
-            }
-            if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
-                *failure = PETTA_MACHINE_STEP_INVALIDATED;
-                return false;
-            }
-            Atom *candidate = NULL;
-            /* A row the pattern does not meet leaves nothing in the heap:
-             * its view and the failed match's terms go at once, so a scan
-             * holds one row's work at a time, not the rows it read. */
-            ArenaMark candidate_mark = arena_mark(&machine->heap);
-            if (stored != CETTA_ATOM_ID_NONE) {
-                /* The universe owns the view/retention transition. Strict
-                 * storage rents views without counting toward retention. */
-                Space *read_space = choice->as.match.space;
-                candidate = choice->as.match.pattern_query
-                    ? term_universe_scoped_atom(universe, &machine->heap, stored)
-                    : read_space && read_space->strict
-                    ? term_universe_view_atom_rented(universe, &machine->heap,
-                                                     stored)
-                    : term_universe_view_atom(universe, &machine->heap,
-                                              stored);
-            }
-            if (!candidate) {
-                arena_reset(&machine->heap, candidate_mark);
-                continue;
-            }
-            if (choice->as.match.pattern_query) {
+    if (choice->as.match.scan_mode) {
+        SpaceMatchScan *scan = &choice->as.match.scan;
+        if (choice->as.match.pattern_query) {
+            /* A pattern query's candidate is the universe's atom:
+             * petta_machine_pattern_candidate first returns the heap to the
+             * choice's mark, which would take a view built here with it. */
+            for (;;) {
+                SpaceMatchScanRow row;
+                SpaceMatchScanStep step = space_match_scan_next_row(scan, &row);
+                if (step == SPACE_MATCH_SCAN_END) {
+                    choice->as.match.scan_exhausted = true;
+                    return false;
+                }
+                if (step != SPACE_MATCH_SCAN_ROW) {
+                    *failure = PETTA_MACHINE_STEP_INVALIDATED;
+                    return false;
+                }
+                ArenaMark candidate_mark = arena_mark(&machine->heap);
+                Atom *candidate =
+                    space_match_scan_row_atom(scan, &machine->heap, row);
+                if (!candidate) {
+                    arena_reset(&machine->heap, candidate_mark);
+                    continue;
+                }
                 if (petta_machine_pattern_candidate(machine, choice, candidate,
-                        candidate_index, failure)) return true;
+                        row.index, failure)) return true;
                 if (*failure != PETTA_MACHINE_STEP_EXHAUSTED) return false;
-                continue;
             }
-            petta_machine_trace_atom(
-                "[petta-machine] match candidate ", candidate);
-            machine->stats.match_candidates++;
-            bool matched = false;
-            Atom *authored = choice->as.match.pattern;
-            Atom *match_pattern = choice->as.match.resolved_pattern
-                ? choice->as.match.resolved_pattern
-                : authored;
-            if (match_pattern != authored)
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
-            if (petta_machine_match_candidate_by_structure(
-                    authored, match_pattern, candidate)) {
-                    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
-                if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch)) {
-                    *failure = PETTA_MACHINE_STEP_CAPACITY;
-                    return false;
-                }
-                matched = petta_machine_match_epoch_candidate(
-                    machine, match_pattern, candidate, epoch);
-            } else {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                Atom *fresh = atom_has_vars(candidate)
-                    ? petta_machine_freshen_in_scope(
-                          machine, candidate, &frame_identity_scope)
-                    : candidate;
-                if (!fresh) {
-                    *failure = PETTA_MACHINE_STEP_CAPACITY;
-                    return false;
-                }
-                matched = petta_machine_unify(
-                    machine, match_pattern, fresh);
-            }
-            if (!matched) {
-                /* The failed match rolled its bindings back: nothing
-                 * refers to what it built. */
-                arena_reset(&machine->heap, candidate_mark);
-                continue;
-            }
-            if (!petta_push_solve_planned(
-                    machine, choice->as.match.template,
-                    choice->as.match.expected,
-                    choice->barrier,
-                    petta_match_choice_template_plan(choice))) {
-                *failure = PETTA_MACHINE_STEP_CAPACITY;
-                return false;
-            }
-            return true;
         }
+        PettaMatchRowTry try = {
+            .machine = machine, .choice = choice, .failure = failure,
+        };
+        SpaceMatchScanStep step = space_match_scan_next(
+            scan, &machine->heap, petta_machine_match_row, &try, NULL);
+        if (step == SPACE_MATCH_SCAN_END) {
+            choice->as.match.scan_exhausted = true;
+            return false;
+        }
+        if (step == SPACE_MATCH_SCAN_INVALIDATED) {
+            *failure = PETTA_MACHINE_STEP_INVALIDATED;
+            return false;
+        }
+        if (step != SPACE_MATCH_SCAN_ROW)
+            return false;
+        if (!petta_push_solve_planned(
+                machine, choice->as.match.template,
+                choice->as.match.expected,
+                choice->barrier,
+                petta_match_choice_template_plan(choice))) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return true;
     }
     CettaCount length = choice->as.match.binding_snapshot_mode
         ? choice->as.match.binding_snapshot.len
@@ -26445,7 +26471,7 @@ static bool petta_machine_match_count_weight(
 
     uint64_t match_count = 0u;
     bool exact_query = false;
-    Atom *query = petta_semantics_match_index_pattern(
+    Atom *query = match_index_selector(
         &machine->heap, resolved_pattern, &exact_query);
     if (!query || !exact_query ||
         (query->kind == ATOM_EXPR && query->expr.len > 0u &&
@@ -26670,7 +26696,7 @@ static bool petta_machine_start_match_choice_policy(
             machine, search_context_bindings(&machine->search),
             &machine->heap, pattern);
         entry_pattern = entry_pattern
-            ? petta_semantics_match_index_pattern(
+            ? match_index_selector(
                   &machine->heap, entry_pattern, NULL)
             : NULL;
         if (!entry_pattern) {
@@ -26721,7 +26747,7 @@ static bool petta_machine_start_match_choice_policy(
             }
         }
         bool exact_query = false;
-        Atom *query = petta_semantics_match_index_pattern(
+        Atom *query = match_index_selector(
             &machine->heap, resolved_pattern, &exact_query);
         if (!query) {
             binding_set_free(&binding_snapshot);
@@ -26750,9 +26776,9 @@ static bool petta_machine_start_match_choice_policy(
 
     CettaIndex *candidate_indices = NULL;
     CettaIndex candidate_len = 0u;
-    SpaceOccurrenceCursor occurrences;
-    space_occurrence_cursor_init_empty(&occurrences);
-    bool occurrence_cursor_mode = false;
+    SpaceMatchScan scan;
+    space_match_scan_init_empty(&scan);
+    bool scan_mode = false;
     Atom *resolved_pattern = NULL;
     Atom *index_pattern = NULL;
     if (!binding_snapshot_mode && !atom_snapshot_mode &&
@@ -26777,42 +26803,42 @@ static bool petta_machine_start_match_choice_policy(
                 continue;
             /* Same interned observation under the same pin: share the
              * discrimination frontier (OrderedOccurrenceCursor).  Copies
-             * keep their own cursor; do not atom_eq on the miss path. */
-            if (live->as.match.occurrence_cursor_mode &&
+             * keep their own scan; do not atom_eq on the miss path. */
+            if (live->as.match.scan_mode &&
                 live->as.match.space == space &&
                 live->as.match.resolved_pattern == resolved_pattern &&
-                space_occurrence_cursor_clone_unstarted(
-                    &live->as.match.occurrences, &occurrences)) {
-                occurrence_cursor_mode = true;
+                space_match_scan_clone_unstarted(&live->as.match.scan,
+                                                 &scan)) {
+                scan_mode = true;
                 machine->stats.match_prefix_cursor_reuse++;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_ACTIVATION_FRAME_PREFIX_REUSE);
             }
             break;
         }
-        if (!occurrence_cursor_mode) {
-            SpaceMatchCursorStatus opened = space_match_cursor_open(
-                space, &machine->heap, resolved_pattern, &occurrences,
-                &index_pattern);
+        if (!scan_mode) {
+            SpaceMatchCursorStatus opened = space_match_scan_open(
+                &scan, space, &machine->heap, resolved_pattern,
+                SPACE_MATCH_SCAN_INDEX_ORDER, &index_pattern);
             if (opened == SPACE_MATCH_CURSOR_FAILED) {
                 binding_set_free(&binding_snapshot);
                 return false;
             }
-            occurrence_cursor_mode = opened == SPACE_MATCH_CURSOR_READY;
+            scan_mode = opened == SPACE_MATCH_CURSOR_READY;
         }
     }
     if (cetta_native_memory_failed && cetta_native_memory_failed()) {
         free(snapshot);
         binding_set_free(&binding_snapshot);
-        space_occurrence_cursor_release(&occurrences);
+        space_match_scan_release(&scan);
         return false;
     }
-    if (!occurrence_cursor_mode &&
+    if (!scan_mode &&
         !binding_snapshot_mode && !atom_snapshot_mode) {
         if (!index_pattern) {
             Atom *resolved = petta_machine_apply_bindings(
                 machine, search_context_bindings(&machine->search), &machine->heap, pattern);
-            index_pattern = petta_semantics_match_index_pattern(&machine->heap, resolved, NULL);
+            index_pattern = match_index_selector(&machine->heap, resolved, NULL);
         }
         if (!index_pattern) {
             binding_set_free(&binding_snapshot);
@@ -26823,7 +26849,7 @@ static bool petta_machine_start_match_choice_policy(
         if (candidate_len >
             (CettaCount)(SIZE_MAX / sizeof(*snapshot))) {
             free(candidate_indices);
-            space_occurrence_cursor_release(&occurrences);
+            space_match_scan_release(&scan);
             return false;
         }
         if (candidate_len > 0u) {
@@ -26862,9 +26888,9 @@ static bool petta_machine_start_match_choice_policy(
             .binding_snapshot = binding_snapshot,
             .binding_snapshot_mode = binding_snapshot_mode,
             .snapshot_mode = true,
-            .occurrences = occurrences,
-            .occurrence_cursor_mode = occurrence_cursor_mode,
-            .occurrence_exhausted = false,
+            .scan = scan,
+            .scan_mode = scan_mode,
+            .scan_exhausted = false,
             .pattern = pattern,
             .resolved_pattern = resolved_pattern,
             .template = template,
@@ -29435,7 +29461,7 @@ static __attribute__((noinline)) bool petta_machine_start_match_at_point(
                          .point_held = true},
         };
         binding_set_init(&hold.as.match.binding_snapshot);
-        space_occurrence_cursor_init_empty(&hold.as.match.occurrences);
+        space_match_scan_init_empty(&hold.as.match.scan);
         if (!petta_choice_push(machine, hold)) {
             space_entry_close(&entry);
             *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -33540,8 +33566,10 @@ static bool petta_machine_push_open_segment(PettaMachineImpl *machine,
             .open = owner->as.answers.open,
             .open_base = base,
             .open_borrowed = true,
+            .decode_mark = term_universe_decode_mark_now(),
         },
     };
+    machine->decode_floor_kept = true;
     return petta_choice_push(machine, segment);
 }
 
@@ -33948,8 +33976,10 @@ static bool petta_machine_start_open_term_answers(
         .heap_mark_captured = true,
         .goal_height = machine->goal_len,
         .barrier = (uint32_t)machine->choice_len,
-        .as.answers = {.expected = expected, .open = open},
+        .as.answers = {.expected = expected, .open = open,
+                       .decode_mark = term_universe_decode_mark_now()},
     };
+    machine->decode_floor_kept = true;
     /* The call's answers are this machine's own when nothing follows it and
      * its destination is the answer variable; a count-only observation of
      * them observes only their multiplicity. */
@@ -34398,8 +34428,9 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
  * leaves nothing behind.  A goal that left goals keeps its state for
  * them. */
 static bool petta_machine_reclaim_host_goal(PettaMachineImpl *machine,
-                                            size_t holder) {
+                                            size_t holder, bool *reclaimed) {
     PettaChoice *choice = &machine->choices[holder];
+    *reclaimed = false;
     if (machine->goal_len != choice->goal_height ||
         choice->goal_trail_mark > machine->goal_trail_len ||
         machine->search.scratch_arena ||
@@ -34416,6 +34447,7 @@ static bool petta_machine_reclaim_host_goal(PettaMachineImpl *machine,
     size_t after = arena_accounted_live_bytes(&machine->heap);
     if (before > after)
         machine->stats.choice_heap_bytes_reclaimed += before - after;
+    *reclaimed = true;
     return true;
 }
 
@@ -34568,10 +34600,22 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
     if (cetta_open_equation_cursor_accept(
             open->cursor, open->vars, tuple->expr.elems, host_values, count,
             last, machine->choices[holder].as.answers.open_base, &base)) {
-        if (last && !petta_machine_reclaim_host_goal(machine, holder)) {
+        bool reclaimed = false;
+        if (last && !petta_machine_reclaim_host_goal(machine, holder,
+                                                     &reclaimed)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
+        /* The accepted values may share decoded copies this machine read for
+         * the goal: the cursor keeps their epochs.  This machine, having
+         * returned to the choice's heap mark, keeps only what it kept there;
+         * the goal it held, and the epochs the cursor lent with it, are
+         * gone. */
+        TermUniverseDecodeMark mark =
+            machine->choices[holder].as.answers.decode_mark;
+        mark.held |= machine->decode_floor;
+        cetta_open_equation_cursor_decode_receive(open->cursor, reclaimed,
+                                                  mark);
         step = cetta_open_equation_cursor_continue(
             open->cursor, open->vars, base, &returned, &values);
     } else if (cetta_open_equation_cursor_handoff(open->cursor) ==
@@ -34917,6 +34961,16 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
         if (!petta_choice_restore(machine, choice)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
+        }
+        /* Backtracking returned the heap to the choice's mark: the cursor's
+         * earlier answers and what this machine made of them are gone, so
+         * it keeps only the epochs it kept there, and what crossed to its
+         * consumer since (decode_floor). */
+        if (choice->as.answers.open && choice->heap_mark_captured &&
+            !choice->retain_heap_across_resume) {
+            TermUniverseDecodeMark mark = choice->as.answers.decode_mark;
+            mark.held |= machine->decode_floor;
+            term_universe_decode_restore(mark);
         }
     }
     if (choice->as.answers.open)
@@ -37479,6 +37533,29 @@ static Atom *petta_machine_values_as_variables(
 }
 
 
+static __attribute__((noinline, cold)) bool petta_machine_try_tcalc_unique(
+        PettaMachineImpl *machine, Atom *expression, Atom *expected,
+        uint32_t barrier, CettaLanguageId language_id, bool *handled,
+        PettaMachineStep *failure) {
+    *handled = false;
+    if (machine->host.call_contracts || !cetta_tcalc_space_try_eval ||
+        !eval_current_library_context ||
+        (eval_current_effective_fuel_limit &&
+         eval_current_effective_fuel_limit() >= 0))
+        return true;
+    struct CettaLibraryContext *lctx = eval_current_library_context();
+    Atom *inner = petta_machine_materialize_answer(
+        machine, expression->expr.elems[1]);
+    CettaCallOutcome tcalc_out;
+    if (!lctx || !inner || !cetta_tcalc_space_try_eval(
+            lctx, machine->space, &machine->heap, inner,
+            language_id, CETTA_TCALC_OBSERVE_PRESENCE, &tcalc_out))
+        return true;
+    *handled = true;
+    return petta_machine_deliver_native_return(
+        machine, tcalc_out, expected, barrier, false, false, failure);
+}
+
 static bool petta_machine_dispatch_solve(
     PettaMachineImpl *machine, const PettaGoal *goal,
     PettaMachineStep *failure) {
@@ -38587,6 +38664,16 @@ static bool petta_machine_dispatch_solve(
         SymbolId aggregate = machine->host.he_library_stream(
             machine->host.context, machine->space, expression);
         if (aggregate != SYMBOL_ID_NONE) {
+            if (__builtin_expect(
+                    form == PETTA_FORM_STREAM_UNIQUE &&
+                    aggregate == g_builtin_syms.unique_atom && nargs == 1u, 0)) {
+                bool tcalc_handled = false;
+                bool tcalc_ok = petta_machine_try_tcalc_unique(
+                    machine, expression, expected, goal->barrier,
+                    CETTA_LANGUAGE_HE, &tcalc_handled, failure);
+                if (tcalc_handled)
+                    return tcalc_ok;
+            }
             Atom *lowered = petta_machine_he_library_stream_lower(
                 machine, expression, aggregate);
             if (!lowered || !petta_push_solve_planned(
@@ -38639,6 +38726,15 @@ static bool petta_machine_dispatch_solve(
          form == PETTA_FORM_STREAM_INTERSECTION ||
          form == PETTA_FORM_STREAM_SUBTRACTION) &&
         petta_machine_builtin_allowed(machine, head)) {
+        if (__builtin_expect(
+                form == PETTA_FORM_STREAM_UNIQUE && nargs == 1u, 0)) {
+            bool tcalc_handled = false;
+            bool tcalc_ok = petta_machine_try_tcalc_unique(
+                machine, expression, expected, goal->barrier,
+                CETTA_LANGUAGE_PETTA, &tcalc_handled, failure);
+            if (tcalc_handled)
+                return tcalc_ok;
+        }
         Atom *written = petta_machine_values_as_variables(
             machine, expression, plan, NULL);
         if (!written) {
@@ -44175,6 +44271,10 @@ PettaMachineStep petta_machine_next(
         if (impl->host.measure_stats && frame->started_ns == 0u)
             frame->started_ns = petta_machine_monotonic_ns();
         petta_machine_offer_collection(impl, 0u);
+        if (impl->decode_floor_kept && !frame->entered) {
+            frame->entered = true;
+            impl->decode_floor |= term_universe_decode_mark_now().held;
+        }
         impl->pull_frame = frame;
         g_petta_machine_steps_open++;
         PettaMachineStep step = petta_machine_next_local(
@@ -44212,6 +44312,9 @@ PettaMachineStep petta_machine_next(
         }
         if (step != PETTA_MACHINE_STEP_ANSWER)
             bindings_init(&bindings);
+        /* The step crosses to the consumer, with what it read. */
+        if (impl->decode_floor_kept)
+            impl->decode_floor |= term_universe_decode_mark_now().held;
         /* An invalidation can terminate the parent before it consumes a
          * buffered child result.  Retire that result's environment too. */
         if (frame->completed_child)

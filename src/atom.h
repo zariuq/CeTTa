@@ -944,6 +944,10 @@ void  arena_set_block_growth(Arena *a, size_t first);
  * allocation larger than that still gets a block of its own size. */
 void  arena_set_block_growth_pow2(Arena *a, size_t least);
 void  arena_free(Arena *a);
+/* arena_free, overwriting each block with BYTE after the finalizers run:
+ * a later read of a freed atom then reads BYTE, for tests that look for
+ * one. */
+void  arena_free_poisoned(Arena *a, uint8_t byte);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);

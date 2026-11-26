@@ -71,7 +71,7 @@ static _Thread_local struct {
 /* CETTA_EXEC_SATURATION_REFERENCE=1 runs the authored rounds, so the two can
  * be compared. */
 static bool exec_saturation_reference(void) {
-    static int reference = -1;
+    static _Thread_local int reference = -1;
     if (reference < 0) {
         const char *setting = getenv("CETTA_EXEC_SATURATION_REFERENCE");
         reference = setting && strcmp(setting, "1") == 0;

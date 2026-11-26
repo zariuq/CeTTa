@@ -401,6 +401,12 @@ struct TermUniverse {
     CettaLeafRwLock concurrent;
     void **retired;
     size_t retired_len, retired_cap;
+    /* Where the decoded copies of record-backed entries live when the
+     * universe keeps them in epochs (term_universe_enable_decode_epochs);
+     * NULL keeps them in the persistent arena for the universe's life. */
+    struct TermUniverseDecodeEpochs *decode_epochs;
+    /* The current epoch's storage identity, or 0 without epochs. */
+    uint32_t decode_identity;
 };
 
 /* A process-local capability for one stored root in one TermUniverse
@@ -603,6 +609,188 @@ bool term_universe_collect(TermUniverse *universe,
  * collection's work proportional to the entries made since the last one. */
 bool term_universe_collect_at_safe_point(TermUniverse *universe,
                                          TermUniverseCollectionReport *out);
+
+/* ── Decoded-copy epochs ────────────────────────────────────────────────
+ *
+ * A record's decoded atom is a cache: the record can be decoded again.  The
+ * runtime's universe allocates the decoded copies of record-backed entries
+ * in its current epoch's own storage instead of the persistent arena, so the
+ * copies of collected entries can be freed although a reader may still hold
+ * one.
+ *
+ * - An epoch closes once its storage reaches its budget: at least 1 MB, or a
+ *   quarter of the closed epochs still unfreed when that is more.  A close
+ *   clears the slots that epoch filled, so later reads decode afresh into the
+ *   next epoch, and an epoch's atoms point only into the same epoch or into
+ *   the persistent arena.  No close happens inside a decode or while a
+ *   thread is in a concurrent scope.
+ * - Epochs are the machines' reads.  A holder of decoded copies (a search
+ *   machine's run, an open-equation cursor, or the thread itself, below
+ *   them) records the epochs whose atoms it may keep, as one bit per epoch:
+ *   at most 64 epochs are unfreed at a time.  A read inside a machine adds
+ *   the current epoch to the running holder; a reader outside every machine
+ *   gets the entry's persistent copy, pinned in its slot, since code outside
+ *   the machines keeps what it reads.
+ * - A closed epoch is freed once no thread's holders keep it.
+ * - Storage that outlives an epoch never shares one of its atoms: stable
+ *   and persistent storage copies a decoded child instead.
+ *
+ * CETTA_DECODE_EPOCHS=0 keeps every decoded copy in the persistent arena.
+ * For tests, CETTA_DECODE_EPOCH_KB sets the least budget in KB and
+ * CETTA_DECODE_EPOCH_POISON=1 overwrites an epoch's storage when it is
+ * freed. */
+bool term_universe_enable_decode_epochs(TermUniverse *universe);
+/* Whether IDENTITY names an unfreed epoch's storage; without a lock. */
+bool term_universe_identity_is_decoded(uint32_t identity);
+/* For an unfreed epoch's storage named IDENTITY: its reset epoch, which with
+ * the identity names that storage for its life (an epoch's storage is never
+ * reset, and a later arena of the same identity has a higher one). */
+bool term_universe_decode_arena_epoch(uint32_t identity, uint64_t *reset_epoch);
+/* The entry's atom for a holder that keeps it for the entry's life (a rule,
+ * a program's definition): a persistent copy, pinned in the entry's slot,
+ * never an epoch's. */
+Atom *term_universe_get_pinned_atom(const TermUniverse *universe, AtomId id);
+/* Free every closed epoch that no thread's holders keep. */
+void term_universe_decode_epochs_release(void);
+
+/* A holder of decoded copies: the epochs whose atoms it may keep, epoch e
+ * being bit (e mod 64) of its set. */
+typedef struct TermUniverseDecodeHolder {
+    uint64_t held;
+    /* Names the holder's current run among every holder's (its thread's
+     * number and the push's), for marks (term_universe_decode_mark_now). */
+    uint64_t thread_number, push_number;
+    struct TermUniverseDecodeHolder *below;
+    /* While it is suspended (it left and lives on): the thread record that
+     * counts its set.  Any thread may resume or forget it. */
+    void *suspended_on;
+    /* A search machine's run: its storage is its machines', whose reclaims
+     * may restore its set to a mark (term_universe_decode_mark_now). */
+    bool run;
+} TermUniverseDecodeHolder;
+#define TERM_UNIVERSE_DECODE_HOLDER_INIT { 0u, 0u, 0u, NULL, NULL, false }
+/* The calling thread's innermost holder (its own, the thread's base, is the
+ * one with nothing below), or NULL before the thread has holders: changed
+ * only by the operations below, read by the inline ones. */
+extern __attribute__((visibility("hidden"))) _Thread_local
+    TermUniverseDecodeHolder *term_universe_decode_innermost;
+/* The calling thread's pushes so far: each push's number, for marks. */
+extern __attribute__((visibility("hidden"))) _Thread_local uint64_t
+    term_universe_decode_pushes;
+void term_universe_decode_holder_push_slow(TermUniverseDecodeHolder *holder);
+/* HOLDER runs innermost on this thread: reads add to its set.  A holder that
+ * keeps nothing yet, on a thread that has holders, changes no published
+ * word. */
+static inline void term_universe_decode_holder_push(
+    TermUniverseDecodeHolder *holder) {
+    TermUniverseDecodeHolder *below = term_universe_decode_innermost;
+    if (holder && below && !holder->suspended_on && !holder->held) {
+        holder->thread_number = below->thread_number;
+        holder->push_number = ++term_universe_decode_pushes;
+        holder->below = below;
+        term_universe_decode_innermost = holder;
+        return;
+    }
+    term_universe_decode_holder_push_slow(holder);
+}
+/* The holder ends and its results may carry what it read: the holder below
+ * keeps its epochs too.  The stack's union, which the thread publishes, is
+ * unchanged. */
+static inline void term_universe_decode_holder_pop(
+    TermUniverseDecodeHolder *holder) {
+    if (!holder || term_universe_decode_innermost != holder || !holder->below)
+        return;
+    TermUniverseDecodeHolder *below = holder->below;
+    term_universe_decode_innermost = below;
+    holder->below = NULL;
+    below->held |= holder->held;
+    holder->held = 0u;
+}
+/* A run holder for the enclosing scope: pushed here, popped where the scope
+ * ends. */
+#define TERM_UNIVERSE_DECODE_RUN_SCOPE(name)                                 \
+    __attribute__((cleanup(term_universe_decode_holder_pop)))               \
+    TermUniverseDecodeHolder name = {.run = true};                           \
+    term_universe_decode_holder_push(&(name))
+void term_universe_decode_holder_leave_slow(TermUniverseDecodeHolder *holder);
+/* A holder that lives on (a cursor between steps) stops running.  What it
+ * hands out may share its decoded copies, so the holder below keeps its
+ * epochs too, until a reclaim restores that holder's set
+ * (term_universe_decode_holder_receive); the left holder stays counted on
+ * this thread while it is suspended.  One that keeps nothing lends nothing
+ * and is counted nowhere until it keeps something. */
+static inline void term_universe_decode_holder_leave(
+    TermUniverseDecodeHolder *holder) {
+    if (holder && !holder->held && term_universe_decode_innermost == holder &&
+        holder->below) {
+        term_universe_decode_innermost = holder->below;
+        holder->below = NULL;
+        return;
+    }
+    term_universe_decode_holder_leave_slow(holder);
+}
+void term_universe_decode_holder_forget_slow(TermUniverseDecodeHolder *holder);
+/* A holder that left ends (a closed cursor): what it kept goes with it. */
+static inline void term_universe_decode_holder_forget(
+    TermUniverseDecodeHolder *holder) {
+    if (holder && (holder->suspended_on || holder->held))
+        term_universe_decode_holder_forget_slow(holder);
+}
+/* The running holder and its set now, when it is a run; otherwise a mark
+ * that names no holder.  A host records the mark with a storage mark that a
+ * later reclaim may return to. */
+typedef struct TermUniverseDecodeMark {
+    uint64_t thread_number, push_number, held;
+} TermUniverseDecodeMark;
+static inline TermUniverseDecodeMark term_universe_decode_mark_now(void) {
+    const TermUniverseDecodeHolder *running = term_universe_decode_innermost;
+    /* Only a run's storage is its machines' heaps, which a reclaim resets. */
+    if (!running || !running->run)
+        return (TermUniverseDecodeMark){0u, 0u, UINT64_MAX};
+    return (TermUniverseDecodeMark){running->thread_number,
+                                    running->push_number, running->held};
+}
+/* The running holder hands HOLDER (one that left it) values that may share
+ * its decoded copies: HOLDER keeps its epochs too.  RECLAIMED: the giver has
+ * since returned its storage to the storage mark MARK was taken with,
+ * releasing everything it made after it, so, when MARK names it, it keeps
+ * only what it kept then. */
+void term_universe_decode_holder_receive_slow(TermUniverseDecodeHolder *holder,
+                                              bool reclaimed,
+                                              TermUniverseDecodeMark mark);
+static inline void term_universe_decode_holder_receive(
+    TermUniverseDecodeHolder *holder, bool reclaimed,
+    TermUniverseDecodeMark mark) {
+    /* A giver that keeps nothing gives nothing and drops nothing. */
+    const TermUniverseDecodeHolder *giver = term_universe_decode_innermost;
+    if (giver && giver->held)
+        term_universe_decode_holder_receive_slow(holder, reclaimed, mark);
+}
+/* The running holder returned its storage to the storage mark MARK was
+ * taken with, releasing everything it made after it: when MARK names it, it
+ * keeps only what it kept then. */
+void term_universe_decode_restore(TermUniverseDecodeMark mark);
+/* Whether a collection of HOLDER that copies out every decoded copy it
+ * keeps (term_universe_decode_holder_emptied) is due: the closed epochs it
+ * alone keeps, which that collection lets be freed, amount to the least
+ * budget and to half of COLLECT_BYTES, the storage the collection reaches,
+ * or the window of unfreed epochs is full.  Its cost is then repaid by the
+ * decoding that filled those epochs. */
+bool term_universe_decode_detach_due(const TermUniverseDecodeHolder *holder,
+                                     size_t collect_bytes);
+/* HOLDER copied out every decoded copy it kept, of every epoch. */
+void term_universe_decode_holder_emptied(TermUniverseDecodeHolder *holder);
+/* The thread's base forgets what it kept (term_universe_decode_top_level_begin). */
+void term_universe_decode_base_clear(void);
+/* A top-level form begins on this thread: its earlier results are dead. */
+static inline void term_universe_decode_top_level_begin(void) {
+    const TermUniverseDecodeHolder *innermost = term_universe_decode_innermost;
+    if (innermost && !innermost->below && innermost->held)
+        term_universe_decode_base_clear();
+}
+/* A parallel worker leaves: what it published has been copied out of the
+ * epochs, so its thread keeps none of them. */
+void term_universe_decode_worker_leave(void);
 /* A holder released COUNT references to entries: rows a space removed. */
 static inline void term_universe_collection_note_released(
     TermUniverse *universe, uint64_t count) {
