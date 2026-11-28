@@ -2937,6 +2937,16 @@ METAMATH_STATE_PROOF_MACHINE_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/proof-machi
 METAMATH_STATE_PROOF_ACTION_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/proof-action.answers
 METAMATH_STATE_ACTION_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/action.answers
 METAMATH_STATE_FINAL_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/final.answers
+# Every stage directory generate-metamath-cogslt-langdef-v1 writes outside the
+# langdef directory, placed inside the langdef directory $(1), so that
+# generations into different directories, concurrent or not, share no
+# intermediate file.
+METAMATH_LANGDEF_STAGE_DIRS_V1 = \
+	METAMATH_FOLD_PART_DIR_V1="$(1)/fold-parts" \
+	METAMATH_OCCURRENCE_SPAN_MASK_STAGE_DIR_V1="$(1)/occurrence-span-mask-parts" \
+	METAMATH_PROOF_SEMANTIC_STAGE_DIR_V1="$(1)/proof-semantic-parts" \
+	METAMATH_PROOF_STORAGE_STAGE_DIR_V1="$(1)/proof-storage-parts" \
+	METAMATH_STATE_PART_DIR_V1="$(1)/state-parts"
 METAMATH_SYNTAX_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta
 METAMATH_LOOKAHEAD_CORE_V1 = experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta
 METAMATH_SYNTAX_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/syntax_compiler_v1.metta
@@ -3258,6 +3268,8 @@ METAMATH_COGSLT_GENERATED_MUTATION_SHARD_INDEX_V1 ?= 0
 METAMATH_COGSLT_GENERATED_MUTATION_JOBS_V1 ?= 4
 METAMATH_COGSLT_GENERATED_MUTATION_EXEMPTIONS_V1 = \
 	tests/langdef/metamath/generated_form_mutation_exemptions_v1.tsv
+METAMATH_COGSLT_AUTHORED_RULE_MUTATION_EXEMPTIONS_V1 = \
+	tests/langdef/metamath/authored_rule_mutation_exemptions_v1.tsv
 METAMATH_PROOF_BACKEND_VERDICTS_V1 = \
 	tests/langdef/metamath/proof_backend_verdicts_v1.tsv
 METAMATH_SET_MM_V1 ?=
@@ -11731,31 +11743,10 @@ test-metamath-cogslt-load-bearing-mutations-v1:
 		"$$mutation_dir/syntax_v1.metta"; \
 	rg -q -U 'def-kw-constant-lexeme(.|\n)*(cp 120)' \
 		"$$mutation_dir/syntax_v1.metta"; \
-	$(MAKE) --no-print-directory -B \
-		BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
+	$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
-		METAMATH_SYNTAX_MANIFEST_V1="$$mutation_dir/syntax_pack_v1.metta" \
-		METAMATH_SYNTAX_SOURCE_V1="$$mutation_dir/syntax_v1.metta" \
-		METAMATH_SOURCE_PACK_V1="$$mutation_dir/generated/syntax_parser_pack_v1.abi" \
-		METAMATH_SYNTAX_LOCK_V1="$$mutation_dir/generated/syntax_lock_v1.metta" \
-		METAMATH_NORMALIZED_PACK_V1="$$mutation_dir/generated/normalized_parser_pack_v1.abi" \
-		METAMATH_SOURCE_PACK_FACTS_V1="$$mutation_dir/generated/source_parser_pack_facts_v1.metta" \
-		METAMATH_NORMALIZED_PACK_FACTS_V1="$$mutation_dir/generated/normalized_parser_pack_facts_v1.metta" \
-		METAMATH_LEXICAL_ROOTS_V1="$$mutation_dir/generated/lexical_roots_v1.answers" \
-		METAMATH_LEXICAL_NFA_V1="$$mutation_dir/generated/lexical_nfa_v1.answers" \
-		METAMATH_EMPTY_GUARD_ANSWERS_V1="$$mutation_dir/generated/empty_guard_v1.answers" \
-		METAMATH_EMPTY_GUARD_EVIDENCE_V1="$$mutation_dir/generated/empty_guard_v1.evidence" \
-		METAMATH_ACTION_BYTECODE_V1="$$mutation_dir/generated/action_bytecode_v1.answers" \
-		METAMATH_OCCURRENCE_FOLD_V1="$$mutation_dir/generated/occurrence_fold_v1.answers" \
-		METAMATH_OCCURRENCE_SPAN_MASK_V1="$$mutation_dir/generated/occurrence_span_mask_v1.answers" \
-		METAMATH_STATE_PROGRAM_V1="$$mutation_dir/generated/state_program_v1.answers" \
-		METAMATH_CURSOR_FOLD_GENERATED_C_V1="$$mutation_dir/generated/syntax_cursor_fold_v1.generated.c" \
-		METAMATH_COMPILED_CURSOR_V1="$$mutation_dir/generated/syntax_cursor_fold_v1.generated.so" \
-		METAMATH_LANGDEF_MANIFEST_V1="$$mutation_dir/langdef.metta" \
-		METAMATH_LANGDEF_LOCK_V1="$$mutation_dir/generated/langdef_lock_v1.metta" \
-		METAMATH_FOLD_PART_DIR_V1="$$mutation_dir/fold-parts" \
-		METAMATH_OCCURRENCE_SPAN_MASK_STAGE_DIR_V1="$$mutation_dir/occurrence-span-mask-parts" \
-		METAMATH_STATE_PART_DIR_V1="$$mutation_dir/state-parts" \
+		METAMATH_LANGDEF_DIR_V1="$$mutation_dir" \
+		$(call METAMATH_LANGDEF_STAGE_DIRS_V1,$$mutation_dir) \
 		generate-metamath-cogslt-langdef-v1 >/dev/null; \
 	$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 		build-parser-pack-cursor-generated-v1 \
@@ -17199,12 +17190,74 @@ test-metamath-cogslt-lowered-artifact-mutations-core-v1: $(BIN) \
 .PHONY: test-metamath-cogslt-every-rule-mutations-v1 \
 	test-metamath-cogslt-every-rule-mutations-core-v1
 test-metamath-cogslt-every-rule-mutations-v1: \
-		test-metamath-cogslt-langdef-v1 $(GSLT_RULE_MUTATOR_V1_BIN)
+		test-metamath-cogslt-langdef-v1 $(GSLT_RULE_MUTATOR_V1_BIN) \
+		$(METAMATH_COGSLT_AUTHORED_RULE_MUTATION_EXEMPTIONS_V1) \
+		$(METAMATH_COGSLT_GENERATED_MUTATION_EXEMPTIONS_V1)
 	@set -uo pipefail; \
 	jobs='$(METAMATH_COGSLT_MUTATION_JOBS_V1)'; \
 	if [[ ! "$$jobs" =~ ^[1-9][0-9]*$$ ]]; then \
 		echo 'invalid coGSLT mutation job count' >&2; exit 1; \
 	fi; \
+	tab=$$'\t'; \
+	exempt=0; \
+	while IFS=$$'\t' read -r exempt_source exempt_rule exempt_mode \
+			exempt_artifact exempt_form exempt_lowered exempt_changed \
+			exempt_reason; do \
+		case "$$exempt_source" in ''|'#'*) continue ;; esac; \
+		source=; \
+		for candidate in $(METAMATH_COGSLT_AUTHORED_RULE_SOURCES_V1); do \
+			if [[ "$$(basename "$$candidate")" == "$$exempt_source" ]]; then \
+				source=$$candidate; \
+			fi; \
+		done; \
+		artifact=$(METAMATH_LANGDEF_GENERATED_DIR_V1)/$$exempt_artifact; \
+		changed_known=1; \
+		for name in $$exempt_changed; do \
+			if [[ "$$name" == */* || \
+				! -f "$(METAMATH_LANGDEF_GENERATED_DIR_V1)/$$name" ]]; then \
+				changed_known=0; \
+			fi; \
+		done; \
+		if [[ -z "$$source" || -z "$$exempt_rule" || \
+			"$$exempt_artifact" == */* || ! -f "$$artifact" || \
+			-z "$$exempt_form" || -z "$$exempt_lowered" || \
+			"$$changed_known" -ne 1 || -z "$$exempt_reason" || \
+			" $$exempt_changed " != *" $$exempt_artifact "* ]] || \
+			[[ "$$exempt_mode" != delete && "$$exempt_mode" != falsify ]]; then \
+			printf 'malformed authored-rule exemption: %s %s %s\n' \
+				"$$exempt_source" "$$exempt_rule" "$$exempt_mode" >&2; \
+			exit 1; \
+		fi; \
+		if [[ "$$($(GSLT_RULE_MUTATOR_V1_BIN) list --source "$$source" | \
+			grep -cxF -- "$$exempt_rule")" -ne 1 ]]; then \
+			printf 'exemption names no rule listed once in %s: %s\n' \
+				"$$source" "$$exempt_rule" >&2; \
+			exit 1; \
+		fi; \
+		if [[ "$$(grep -c '' "$$artifact")" -ne \
+			"$$($(GSLT_RULE_MUTATOR_V1_BIN) list-forms \
+				--source "$$artifact" | grep -c '')" ]]; then \
+			printf 'an exempt artifact must hold one form per line: %s\n' \
+				"$$artifact" >&2; \
+			exit 1; \
+		fi; \
+		if [[ "$$(grep -cxF -- "$$exempt_form" "$$artifact")" -ne 1 ]]; then \
+			printf 'exemption names no form generated once in %s: %s\n' \
+				"$$artifact" "$$exempt_form" >&2; \
+			exit 1; \
+		fi; \
+		for candidate in $(METAMATH_COGSLT_GENERATED_FORM_ARTIFACTS_V1); do \
+			if [[ "$$(basename "$$candidate")" == "$$exempt_artifact" && \
+				"$$(cut -f1-3 $(METAMATH_COGSLT_GENERATED_MUTATION_EXEMPTIONS_V1) | \
+				grep -cxF -- "$$exempt_artifact$$tab$$exempt_mode$$tab$$exempt_form")" \
+				-ne 1 ]]; then \
+				printf 'authored-rule exemption names a form whose %s mutation is not exempt: %s %s\n' \
+					"$$exempt_mode" "$$exempt_source" "$$exempt_rule" >&2; \
+				exit 1; \
+			fi; \
+		done; \
+		exempt=$$((exempt + 1)); \
+	done <$(METAMATH_COGSLT_AUTHORED_RULE_MUTATION_EXEMPTIONS_V1); \
 	status=0; pids=(); \
 	for ((shard = 0; shard < jobs; shard++)); do \
 		$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
@@ -17228,20 +17281,33 @@ test-metamath-cogslt-every-rule-mutations-v1: \
 		done < <($(GSLT_RULE_MUTATOR_V1_BIN) list --source "$$source"); \
 	done; \
 	total=$$((rule_count * 2)); \
-	printf '(MetamathCoGSLTEveryRuleMutationV1Summary %d %d 0)\n' \
-		"$$total" "$$total"
+	printf '(MetamathCoGSLTEveryRuleMutationV1Summary %d %d 0 %d %d)\n' \
+		"$$total" "$$((total - exempt))" "$$exempt" "$$jobs"
 
 test-metamath-cogslt-every-rule-mutations-core-v1: $(BIN) \
-		$(GSLT_RULE_MUTATOR_V1_BIN)
+		$(GSLT_RULE_MUTATOR_V1_BIN) \
+		$(LANGDEF_PROOF_VERDICT_DRIVER_V1) \
+		$(METAMATH_PROOF_BACKEND_VERDICTS_V1) \
+		$(METAMATH_COGSLT_AUTHORED_RULE_MUTATION_EXEMPTIONS_V1)
 	@if [[ -z "$(strip $(GSLT2PARSE_COMPILER_ROOT))" ]]; then \
 		echo 'set GSLT2PARSE_COMPILER_ROOT to the parser-pack compiler source directory'; \
 		exit 1; \
 	fi
 	@set -uo pipefail; \
-	mutation_dir=$$(mktemp -d runtime/metamath-cogslt-every-rule.XXXXXX); \
+	mutation_dir=$$(mktemp -d runtime/metamath-cogslt-every-rule-XXXXXX); \
 	trap 'rm -rf "$$mutation_dir"' EXIT INT TERM; \
 	mkdir -p "$$mutation_dir/generated"; \
 	cp $(METAMATH_LANGDEF_DIR_V1)/*.metta "$$mutation_dir/"; \
+	registry_root=$$(realpath runtime); \
+	runtime_bin=$$(realpath $(BIN)); \
+	tab=$$'\t'; \
+	declare -A exempt_lowerings=(); \
+	while IFS=$$'\t' read -r exempt_source exempt_rule exempt_mode \
+			exempt_artifact exempt_form exempt_lowered exempt_changed \
+			exempt_reason; do \
+		case "$$exempt_source" in ''|'#'*) continue ;; esac; \
+		exempt_lowerings["$$exempt_source$$tab$$exempt_rule$$tab$$exempt_mode"]="$$exempt_artifact$$tab$$exempt_form$$tab$$exempt_lowered$$tab$$exempt_changed"; \
+	done <$(METAMATH_COGSLT_AUTHORED_RULE_MUTATION_EXEMPTIONS_V1); \
 	source_filter='$(METAMATH_COGSLT_MUTATION_SOURCE_FILTER_V1)'; \
 	rule_filter='$(METAMATH_COGSLT_MUTATION_RULE_FILTER_V1)'; \
 	shard_count='$(METAMATH_COGSLT_MUTATION_SHARD_COUNT_V1)'; \
@@ -17282,17 +17348,32 @@ test-metamath-cogslt-every-rule-mutations-core-v1: $(BIN) \
 		echo 'no authored coGSLT rules selected' >&2; exit 1; \
 	fi; \
 	expected=$$((rule_count * mode_count)); \
-	total=0; killed=0; inert=0; \
+	total=0; killed=0; inert=0; exempt=0; rejected=0; witnessed=0; audited=0; \
 	: >"$$mutation_dir/inert.tsv"; \
 	generate_case() { \
 		timeout 300 $(MAKE) --no-print-directory \
 			BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 			GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 			METAMATH_LANGDEF_DIR_V1="$$mutation_dir" \
-			METAMATH_FOLD_PART_DIR_V1="$$mutation_dir/fold-parts" \
-			METAMATH_STATE_PART_DIR_V1="$$mutation_dir/state-parts" \
+			$(call METAMATH_LANGDEF_STAGE_DIRS_V1,$$mutation_dir) \
 			generate-metamath-cogslt-langdef-v1 \
 			>"$$mutation_dir/generate.log" 2>&1; \
+	}; \
+	lowers_to_exempt_form() { \
+		local artifact form lowered changed file observed; \
+		IFS=$$'\t' read -r artifact form lowered changed <<<"$$1"; \
+		diff "$(METAMATH_LANGDEF_GENERATED_DIR_V1)/$$artifact" \
+			"$$mutation_dir/generated/$$artifact" | \
+			rg '^[<>] ' >"$$mutation_dir/lowering.txt"; \
+		{ printf '< %s\n' "$$form"; \
+			if [[ "$$lowered" != - ]]; then printf '> %s\n' "$$lowered"; fi; } | \
+			cmp -s - "$$mutation_dir/lowering.txt" || return 1; \
+		observed=$$(for file in "$$mutation_dir"/generated/*; do \
+			cmp -s "$$file" \
+				"$(METAMATH_LANGDEF_GENERATED_DIR_V1)/$${file##*/}" || \
+				printf '%s\n' "$${file##*/}"; \
+		done | LC_ALL=C sort); \
+		[[ "$$observed" == "$$(printf '%s\n' $$changed | LC_ALL=C sort)" ]]; \
 	}; \
 	public_witness_changed() { \
 		output=$$(CETTA_LANGDEF_TEST_MANIFEST="$$mutation_dir/langdef.metta" \
@@ -17300,6 +17381,26 @@ test-metamath-cogslt-every-rule-mutations-core-v1: $(BIN) \
 			tests/langdef/metamath/langdef_parse.metta 2>&1); \
 		status=$$?; \
 		[[ "$$status" -ne 0 ]] || printf '%s\n' "$$output" | rg -q '\(Error '; \
+	}; \
+	audit_witness_changed() { \
+		local expected database status observed; \
+		while IFS=$$'\t' read -r expected database; do \
+			case "$$expected" in ''|'#'*) continue ;; esac; \
+			status=0; \
+			CETTA_LANGDEF_ROOT="$$registry_root" \
+			CETTA_LANGDEF_BIN="$$runtime_bin" \
+			CETTA_LANGDEF_MANIFEST="$$mutation_dir/langdef.metta" \
+			CETTA_LANGDEF_PROOF_BACKEND=generated-relational-audit-v1 \
+			timeout 180 $(LANGDEF_PROOF_VERDICT_DRIVER_V1) "$$database" \
+				</dev/null >/dev/null 2>&1 || status=$$?; \
+			case "$$status" in \
+			0) observed=pass ;; \
+			1) observed=fail ;; \
+			*) observed=undecided ;; \
+			esac; \
+			[[ "$$observed" == "$$expected" ]] || return 0; \
+		done <$(METAMATH_PROOF_BACKEND_VERDICTS_V1); \
+		return 1; \
 	}; \
 	candidate_ordinal=0; \
 	for source in $(METAMATH_COGSLT_AUTHORED_RULE_SOURCES_V1); do \
@@ -17327,31 +17428,55 @@ test-metamath-cogslt-every-rule-mutations-core-v1: $(BIN) \
 					exit 1; \
 				fi; \
 				mv "$$mutation_dir/$$base.next" "$$mutation_dir/$$base"; \
-				if ! generate_case; then \
+				exempt_key="$$base$$tab$$rule$$tab$$mode"; \
+				if [[ -n "$${exempt_lowerings[$$exempt_key]+exempt}" ]]; then \
+					if ! generate_case || \
+						! lowers_to_exempt_form \
+							"$${exempt_lowerings[$$exempt_key]}"; then \
+						printf 'exempt authored-rule mutation does not change exactly its listed form and files: %s\t%s\t%s\n' \
+							"$$base" "$$rule" "$$mode" >&2; \
+						exit 1; \
+					fi; \
+					exempt=$$((exempt + 1)); \
+					printf 'exempt: %s\t%s\t%s\n' "$$base" "$$rule" "$$mode"; \
+				elif ! generate_case; then \
 					killed=$$((killed + 1)); \
+					rejected=$$((rejected + 1)); \
 				elif public_witness_changed; then \
 					killed=$$((killed + 1)); \
+					witnessed=$$((witnessed + 1)); \
+				elif audit_witness_changed; then \
+					killed=$$((killed + 1)); \
+					audited=$$((audited + 1)); \
 				else \
 					inert=$$((inert + 1)); \
 					printf '%s\t%s\t%s\n' "$$base" "$$rule" "$$mode" | \
 						tee -a "$$mutation_dir/inert.tsv" >&2; \
 				fi; \
 				if (( total % 25 == 0 || total == expected )); then \
-					printf 'Metamath coGSLT rule mutations: %d/%d, killed=%d, inert=%d\n' \
-						"$$total" "$$expected" "$$killed" "$$inert"; \
+					printf 'Metamath coGSLT rule mutations: %d/%d, killed=%d, inert=%d, exempt=%d, rejected=%d, witnessed=%d, audited=%d\n' \
+						"$$total" "$$expected" "$$killed" "$$inert" "$$exempt" \
+						"$$rejected" "$$witnessed" "$$audited"; \
 				fi; \
 			done; \
 		done < <($(GSLT_RULE_MUTATOR_V1_BIN) list --source "$$source"); \
 		cp "$$source" "$$mutation_dir/$$base"; \
 	done; \
+	if [[ -z "$$source_filter" && -z "$$rule_filter" && \
+		"$$modes" == 'delete falsify' && "$$witnessed" -eq 0 ]]; then \
+		echo 'authored rules never reached a regenerated public witness' >&2; \
+		exit 1; \
+	fi; \
 	if [[ "$$total" -ne "$$expected" || \
-		$$((killed + inert)) -ne "$$expected" || "$$inert" -ne 0 ]]; then \
+		$$((killed + inert + exempt)) -ne "$$expected" || \
+		"$$inert" -ne 0 ]]; then \
 		echo 'inert authored coGSLT mutations remain' >&2; \
 		cat "$$mutation_dir/inert.tsv" >&2; \
 		exit 1; \
 	fi; \
-	printf '(MetamathCoGSLTEveryRuleMutationV1Summary %d %d %d)\n' \
-		"$$total" "$$killed" "$$inert"
+	printf '(MetamathCoGSLTEveryRuleMutationShardV1Summary %d %d %d %d %d %d %d)\n' \
+		"$$total" "$$killed" "$$inert" "$$exempt" "$$rejected" \
+		"$$witnessed" "$$audited"
 
 .PHONY: test-metamath-cogslt-generated-form-mutations-v1 \
 	test-metamath-cogslt-generated-form-mutations-driver-v1 \
@@ -17694,8 +17819,7 @@ test-metamath-cogslt-include-mutations-v1: \
 		$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 			GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 			METAMATH_LANGDEF_DIR_V1="$$1" \
-			METAMATH_FOLD_PART_DIR_V1="$$1/fold-parts" \
-			METAMATH_STATE_PART_DIR_V1="$$1/state-parts" \
+			$(call METAMATH_LANGDEF_STAGE_DIRS_V1,$$1) \
 			generate-metamath-cogslt-langdef-v1 >/dev/null; \
 	}; \
 	require_changed_program() { \
@@ -17806,8 +17930,7 @@ test-metamath-cogslt-state-mutations-v1: test-metamath-cogslt-langdef-v1 \
 		$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 			GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 			METAMATH_LANGDEF_DIR_V1="$$1" \
-			METAMATH_FOLD_PART_DIR_V1="$$1/fold-parts" \
-			METAMATH_STATE_PART_DIR_V1="$$1/state-parts" \
+			$(call METAMATH_LANGDEF_STAGE_DIRS_V1,$$1) \
 			generate-metamath-cogslt-langdef-v1 >/dev/null; \
 	}; \
 	require_changed_artifacts() { \
@@ -18066,6 +18189,20 @@ test-metamath-cogslt-state-mutations-v1: test-metamath-cogslt-langdef-v1 \
 	rg -q 'LangDef:StageRejected MetamathV1' <<<"$$mutation_output"; \
 	printf '%s\n' '(MetamathCoGSLTStateMutationV1Summary 17 17 0)'
 
+# Targeted mutations of proof_v1.metta, each regenerated with private stage
+# directories and imported through the mutant: the normal check's operands
+# must refuse to generate; the decoder's numbers and the unknown-label policy
+# must refuse the database; a label kind of the proof machine that no proof
+# action classifies must refuse to load; the $d candidates of a theorem read from the
+# active hypotheses (normal) or not computed at all (compressed) must admit
+# the invalid reuse of a theorem without its $d condition; the ordered
+# hypotheses read from the $d relation must refuse the reuse of a theorem with
+# an essential hypothesis.  Summary: mutants, killed, inert, exempt.  One
+# mutant is exempt: reading the hypothesis snapshot from the $d relation
+# changes the generated state program but no verdict, since the snapshot's
+# relation, mm-state-assertion-active-hypothesis, is read by no output of
+# MetamathV1 (generated_form_mutation_exemptions_v1.tsv gives the reason); the
+# gate requires that its database still imports.
 .PHONY: test-metamath-cogslt-proof-mutations-v1
 test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 		$(BIN) $(GSLT_RULE_MUTATOR_V1_BIN) \
@@ -18083,14 +18220,14 @@ test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 	compressed_disjoint_dir=$$(mktemp -d \
 		langdef/metamath-proof-compressed-disjoint.XXXXXX); \
 	hypothesis_dir=$$(mktemp -d langdef/metamath-proof-hypothesis.XXXXXX); \
-	trap 'rm -rf "$$check_dir" "$$decoder_dir" "$$policy_dir" "$$kind_dir" "$$disjoint_dir" "$$compressed_disjoint_dir" "$$hypothesis_dir"' \
+	snapshot_dir=$$(mktemp -d langdef/metamath-proof-snapshot.XXXXXX); \
+	trap 'rm -rf "$$check_dir" "$$decoder_dir" "$$policy_dir" "$$kind_dir" "$$disjoint_dir" "$$compressed_disjoint_dir" "$$hypothesis_dir" "$$snapshot_dir"' \
 		EXIT INT TERM; \
 	build_mutation() { \
 		$(MAKE) --no-print-directory BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
 			GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 			METAMATH_LANGDEF_DIR_V1="$$1" \
-			METAMATH_FOLD_PART_DIR_V1="$$1/fold-parts" \
-			METAMATH_STATE_PART_DIR_V1="$$1/state-parts" \
+			$(call METAMATH_LANGDEF_STAGE_DIRS_V1,$$1) \
 			generate-metamath-cogslt-langdef-v1 >/dev/null; \
 	}; \
 	require_changed_artifacts() { \
@@ -18110,7 +18247,8 @@ test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 			-e "!(println! (langdef:import-file &mutation-langdef \"$$2\"))"; \
 	}; \
 	for mutation_dir in "$$check_dir" "$$decoder_dir" "$$policy_dir" "$$kind_dir" \
-		"$$disjoint_dir" "$$compressed_disjoint_dir" "$$hypothesis_dir"; do \
+		"$$disjoint_dir" "$$compressed_disjoint_dir" "$$hypothesis_dir" \
+		"$$snapshot_dir"; do \
 		cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$mutation_dir/"; \
 	done; \
 	sed '/    (rule mm-proof-normal-check/,/      (body))/s/mm-label mm-symbol mm-proof-step/mm-label mm-proof-step mm-proof-step/' \
@@ -18153,39 +18291,40 @@ test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 	require_changed_artifacts "$$kind_dir"; \
 	mutation_output=$$(import_result "$$kind_dir" \
 		tests/support/metamath_mini_thm_v0.mm); \
-	rg -q 'LangDef:StageRejected MetamathV1' <<<"$$mutation_output"; \
-	sed '/    (rule mm-proof-normal-snapshot-disjoint/,/      (body))/s/mm-state-disjoint-variable/mm-state-active-hypothesis/' \
+	rg -q 'exact action selector is missing or repeats a source kind' \
+		<<<"$$mutation_output"; \
+	sed '/    (rule mm-proof-normal-select-disjoint-left-mandatory/,/      (body))/s/mm-state-disjoint-variable/mm-state-active-hypothesis/' \
 		"$$disjoint_dir/proof_v1.metta" \
 		>"$$disjoint_dir/proof_v1.mutated"; \
 	mv "$$disjoint_dir/proof_v1.mutated" "$$disjoint_dir/proof_v1.metta"; \
-	rg -q -U 'mm-proof-normal-snapshot-disjoint(.|\n)*mm-state-active-hypothesis' \
+	rg -q -U 'mm-proof-normal-select-disjoint-left-mandatory(.|\n)*mm-state-active-hypothesis' \
 		"$$disjoint_dir/proof_v1.metta"; \
 	build_mutation "$$disjoint_dir"; \
 	require_changed_artifacts "$$disjoint_dir"; \
 	mutation_output=$$(import_result "$$disjoint_dir" \
-		tests/langdef/metamath/positive_theorem_disjoint_substitution.mm); \
-	rg -q 'LangDef:StageRejected MetamathV1' \
+		tests/langdef/metamath/invalid_theorem_reused_missing_disjoint.mm); \
+	rg -q 'LangDef:Imported MetamathV1' \
 		<<<"$$mutation_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source "$$compressed_disjoint_dir/proof_v1.metta" \
 		--out "$$compressed_disjoint_dir/proof_v1.mutated" \
-		--rule mm-proof-compressed-snapshot-disjoint --mode falsify; \
+		--rule mm-proof-compressed-select-disjoint-left-mandatory --mode falsify; \
 	mv "$$compressed_disjoint_dir/proof_v1.mutated" \
 		"$$compressed_disjoint_dir/proof_v1.metta"; \
-	rg -q -U 'mm-proof-compressed-snapshot-disjoint(.|\n)*state-noop-v1' \
+	rg -q -U 'mm-proof-compressed-select-disjoint-left-mandatory(.|\n)*state-noop-v1' \
 		"$$compressed_disjoint_dir/proof_v1.metta"; \
 	build_mutation "$$compressed_disjoint_dir"; \
 	require_changed_artifacts "$$compressed_disjoint_dir"; \
 	mutation_output=$$(import_result "$$compressed_disjoint_dir" \
-		tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm); \
-	rg -q 'LangDef:StageRejected MetamathV1' \
+		tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm); \
+	rg -q 'LangDef:Imported MetamathV1' \
 		<<<"$$mutation_output"; \
-	sed '/    (rule mm-proof-normal-snapshot-hypotheses/,/      (body))/s/mm-state-active-hypothesis/mm-state-disjoint-variable/' \
+	sed '/    (rule mm-proof-normal-order-hypotheses/,/      (body))/s/mm-state-active-hypothesis/mm-state-disjoint-variable/' \
 		"$$hypothesis_dir/proof_v1.metta" \
 		>"$$hypothesis_dir/proof_v1.mutated"; \
 	mv "$$hypothesis_dir/proof_v1.mutated" \
 		"$$hypothesis_dir/proof_v1.metta"; \
-	rg -q -U 'mm-proof-normal-snapshot-hypotheses(.|\n)*mm-state-disjoint-variable' \
+	rg -q -U 'mm-proof-normal-order-hypotheses(.|\n)*mm-state-disjoint-variable' \
 		"$$hypothesis_dir/proof_v1.metta"; \
 	build_mutation "$$hypothesis_dir"; \
 	require_changed_artifacts "$$hypothesis_dir"; \
@@ -18193,7 +18332,20 @@ test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 		tests/langdef/metamath/positive_theorem_reused_essential.mm); \
 	rg -q 'LangDef:StageRejected MetamathV1' \
 		<<<"$$mutation_output"; \
-	printf '%s\n' '(MetamathCoGSLTProofMutationV1Summary 7 7 0)'
+	sed '/    (rule mm-proof-normal-snapshot-hypotheses/,/      (body))/s/mm-state-active-hypothesis/mm-state-disjoint-variable/' \
+		"$$snapshot_dir/proof_v1.metta" \
+		>"$$snapshot_dir/proof_v1.mutated"; \
+	mv "$$snapshot_dir/proof_v1.mutated" \
+		"$$snapshot_dir/proof_v1.metta"; \
+	rg -q -U 'mm-proof-normal-snapshot-hypotheses(.|\n)*mm-state-disjoint-variable' \
+		"$$snapshot_dir/proof_v1.metta"; \
+	build_mutation "$$snapshot_dir"; \
+	require_changed_artifacts "$$snapshot_dir"; \
+	mutation_output=$$(import_result "$$snapshot_dir" \
+		tests/langdef/metamath/positive_theorem_reused_essential.mm); \
+	rg -q 'LangDef:Imported MetamathV1' \
+		<<<"$$mutation_output"; \
+	printf '%s\n' '(MetamathCoGSLTProofMutationV1Summary 8 7 0 1)'
 
 
 
@@ -28568,7 +28720,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	hyperpose_shared_space_sloppy_update hyperpose_shared_space_transactions \
 	hyperpose_capture_alias_transfer hyperpose_nested_transaction \
 	foldall_open_match_collection named_space_substitution \
-	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
+	profile_petta_base_extension_boundary profile_petta_base_builtin_policy \
+	conjunctive_match_count_semantics \
 	search_machine_relational_head_phases search_machine_relational_output_phases \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
 	stream_alpha_unique root_builtin_argument_demand computed_value_arguments \
@@ -29602,26 +29755,81 @@ test-generated-name-renaming: $(BIN) tests/support/generated_space_names.py \
 		tests/support/check_generated_name_renaming.py
 	@PYTHONDONTWRITEBYTECODE=1 $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_generated_name_renaming.py ./$(BIN)
 
+# The builtin policy (src/session.c) names the profiles that offer each
+# builtin.  Plain PeTTa defines none of the names its profile is not offered:
+# an expression such a name heads is data, at a directive's root as nested
+# (P-APP-1), and the extended profile runs it.  Each fixture on the tier, in
+# the equation machine and in the generic evaluator, under both profiles.
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
-test-petta-profile-boundary: $(BIN)
-	@base=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		tests/petta/profile_petta_base_extension_boundary.metta 2>&1); \
-	base_expected=$$(cat tests/petta/profile_petta_base_extension_boundary.expected); \
-	if [ "$$base" != "$$base_expected" ]; then \
-		echo "FAIL: base PeTTa profile boundary"; \
-		diff <(printf '%s\n' "$$base_expected") <(printf '%s\n' "$$base") | head -40; \
-		exit 1; \
-	fi; \
-	extended=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta --profile extended \
-		tests/petta/profile_petta_base_extension_boundary.metta 2>&1); \
-	extended_expected=$$(cat tests/petta/profile_petta_base_extension_boundary.extended.expected); \
-	if [ "$$extended" != "$$extended_expected" ]; then \
-		echo "FAIL: named PeTTa extended profile boundary"; \
-		diff <(printf '%s\n' "$$extended_expected") <(printf '%s\n' "$$extended") | head -40; \
-		exit 1; \
-	fi; \
-	echo "PASS: base PeTTa remains oracle-compatible while named extensions require the extended profile"
+test-petta-semantics: test-petta-profile-boundary
+test-petta-profile-boundary: $(BIN) \
+		tests/petta/profile_petta_base_extension_boundary.metta \
+		tests/petta/profile_petta_base_extension_boundary.expected \
+		tests/petta/profile_petta_base_extension_boundary.extended.expected \
+		tests/petta/profile_petta_base_builtin_policy.metta \
+		tests/petta/profile_petta_base_builtin_policy.expected \
+		tests/petta/profile_petta_base_builtin_policy.extended.expected
+	@set -eu; mkdir -p runtime; \
+	for route in tier machine generic; do \
+		case $$route in \
+			tier) machine=1; reference=;; \
+			machine) machine=1; reference=1;; \
+			generic) machine=0; reference=;; \
+		esac; \
+		for profile in "" "--profile extended"; do \
+			for fixture in profile_petta_base_extension_boundary \
+					profile_petta_base_builtin_policy; do \
+				expected=tests/petta/$$fixture.expected; \
+				if [ -n "$$profile" ]; then \
+					expected=tests/petta/$$fixture.extended.expected; \
+				fi; \
+				CETTA_PETTA_SEARCH_MACHINE=$$machine \
+				CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+					--lang petta $$profile tests/petta/$$fixture.metta \
+					> runtime/petta-$$fixture.out 2>&1 || { \
+					echo "FAIL: $$fixture exited ($$route $$profile)"; \
+					cat runtime/petta-$$fixture.out; exit 1; }; \
+				if ! cmp -s "$$expected" runtime/petta-$$fixture.out; then \
+					echo "FAIL: PeTTa profile boundary, $$fixture ($$route $$profile)"; \
+					diff -u "$$expected" runtime/petta-$$fixture.out | head -40; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done
+	@echo "PASS: plain PeTTa leaves the builtins its profile is not offered as data, at the root as nested, and the extended profile runs them, on the tier, in the machine and in the generic evaluator"
+
+# The libraries' checks guard a comparison or arithmetic step with `if`: `and`
+# and `or` evaluate both operands, so a guard among their operands let a value
+# it rejects reach the comparison, which raised.  Each check with a value its
+# guard rejects and one it admits, on the three routes, under both profiles.
+.PHONY: test-petta-library-guards
+test-petta-semantics: test-petta-library-guards
+test-petta-library-guards: $(BIN) tests/petta/library_guards.metta \
+		tests/petta/library_guards.expected
+	@set -eu; mkdir -p runtime; \
+	for route in tier machine generic; do \
+		case $$route in \
+			tier) machine=1; reference=;; \
+			machine) machine=1; reference=1;; \
+			generic) machine=0; reference=;; \
+		esac; \
+		for profile in "" "--profile extended"; do \
+			CETTA_PETTA_SEARCH_MACHINE=$$machine \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$profile tests/petta/library_guards.metta \
+				> runtime/petta-library-guards.out 2>&1 || { \
+				echo "FAIL: library_guards exited ($$route $$profile)"; \
+				cat runtime/petta-library-guards.out; exit 1; }; \
+			if ! cmp -s tests/petta/library_guards.expected runtime/petta-library-guards.out; then \
+				echo "FAIL: library checks under a strict guard ($$route $$profile)"; \
+				diff -u tests/petta/library_guards.expected runtime/petta-library-guards.out | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done
+	@echo "PASS: the libraries' checks answer for a value their guard rejects instead of raising, on the tier, in the machine and in the generic evaluator, under both profiles"
 
 test-petta-semantics-differential: $(BIN)
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
@@ -35747,6 +35955,34 @@ test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+# lib_pln's and lib_wmpln's consistency checks guard their divisions with
+# `if`, since `and` evaluates both operands: an integer zero divided there.
+# Every lane that loads these libraries reads them: HE under its four
+# profiles, and Prime.
+.PHONY: test-he-pln-consistency-guards
+test-he-contract-suite: test-he-pln-consistency-guards
+test-he-pln-consistency-guards: $(BIN) lib/lib_pln.metta lib/lib_wmpln.metta \
+		tests/test_pln_consistency_guards.metta \
+		tests/test_pln_consistency_guards.expected \
+		tests/test_wmpln_consistency_guards.metta \
+		tests/test_wmpln_consistency_guards.expected
+	@set -eu; mkdir -p runtime; \
+	for lane in "he he" "he he-compat" "he extended" "he he-prime" "prime"; do \
+		set -- $$lane; \
+		if [ $$# -eq 2 ]; then args="--lang $$1 --profile $$2"; else args="--lang $$1"; fi; \
+		for stem in test_pln_consistency_guards test_wmpln_consistency_guards; do \
+			$(CETTA_BIN_INVOKE) $$args tests/$$stem.metta \
+				> runtime/$$stem.out 2>&1 || { \
+				echo "FAIL: $$stem exited ($$args)"; cat runtime/$$stem.out; exit 1; }; \
+			if ! cmp -s tests/$$stem.expected runtime/$$stem.out; then \
+				echo "FAIL: $$stem ($$args)"; \
+				diff -u tests/$$stem.expected runtime/$$stem.out | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done
+	@echo "PASS: lib_pln's and lib_wmpln's consistency checks answer False for a zero probability, integer or float, without dividing by it, on HE's four profiles and on Prime"
 
 .PHONY: test-he-return-contract-correlation
 test-he-return-contract-correlation: $(BIN)

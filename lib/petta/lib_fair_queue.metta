@@ -46,16 +46,16 @@
        (let ($entry $tail) (decons-atom $entries)
          (case $entry
            (((Fair:Entry $id $cost $value)
-             (and (binary:unsigned? $id)
+             (if (binary:unsigned? $id)
                (and (binary:unsigned? $cost)
                  (and (< $previous $id)
-                   (and (< $id $next) (fair-queue:entries? $tail $id $next))))))
+                   (and (< $id $next) (fair-queue:entries? $tail $id $next)))) False))
             ($other False)))) False)))
 
 (= (fair-queue:valid? $queue)
    (case $queue
      (((Fair:Queue $phase $next $entries)
-       (and (binary:unsigned? $phase)
+       (if (binary:unsigned? $phase)
          (and (< $phase 8)
-           (and (binary:unsigned? $next) (fair-queue:entries? $entries -1 $next)))))
+           (if (binary:unsigned? $next) (fair-queue:entries? $entries -1 $next) False)) False))
       ($other False))))

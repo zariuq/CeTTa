@@ -96,18 +96,20 @@
 
 (: conditional-probability-consistency (-> Number Number Number Bool))
 (= (conditional-probability-consistency $As $Bs $ABs)
-   (and (< 0 $As)
-        (and (<= (smallest-intersection-probability $As $Bs) $ABs)
-             (<= $ABs (largest-intersection-probability $As $Bs)))))
+   (if (< 0 $As)
+       (and (<= (smallest-intersection-probability $As $Bs) $ABs)
+            (<= $ABs (largest-intersection-probability $As $Bs)))
+       False))
 
 (= (Consistency_ImplicationImplicantConjunction $As $Bs $Cs $ACs $BCs)
    ; Conditional probability consistency checks:
    ; P(C|A) <= P(C)/P(A)  =>  $sAC <= $sC / $sA
    ; P(C|B) <= P(C)/P(B)  =>  $sBC <= $sC / $sB
    ; Also ensure denominators are not zero for the checks.
-   (and5 (> $As 0) (> $Bs 0) (> $Cs 0) ; Avoid division by zero and ensure meaningful probabilities
-         (<= $ACs (/ $Cs $As))
-         (<= $BCs (/ $Cs $Bs))))
+   (if (and (> $As 0) (and (> $Bs 0) (> $Cs 0))) ; Avoid division by zero and ensure meaningful probabilities
+       (and (<= $ACs (/ $Cs $As))
+            (<= $BCs (/ $Cs $Bs)))
+       False))
 
 ;; Truth functions
 

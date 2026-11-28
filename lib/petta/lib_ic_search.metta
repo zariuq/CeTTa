@@ -102,7 +102,7 @@
                         ($other IC:None)))) IC:None)) IC:None))))))))
 
 (= (ic:prepare $model $original $sources $quantum $branches)
-   (if (and (binary:unsigned? $quantum) (> $quantum 0))
+   (if (if (binary:unsigned? $quantum) (> $quantum 0) False)
      (case (ic-search:observation $model $original)
        (((IC:Some $observation)
          (if (ic-search:branches? $branches ())
@@ -135,9 +135,9 @@
 (= (ic-search:statistics? $statistics)
    (case $statistics
      (((IC:Statistics $turns $candidates $accepted $faults)
-       (and (binary:unsigned? $turns) (and (binary:unsigned? $candidates)
-         (and (binary:unsigned? $accepted)
-           (and (binary:unsigned? $faults) (<= $accepted $candidates))))))
+       (and (binary:unsigned? $turns) (if (binary:unsigned? $candidates)
+         (if (binary:unsigned? $accepted)
+           (and (binary:unsigned? $faults) (<= $accepted $candidates)) False) False)))
       ($other False))))
 (= (ic-search:room? $next $statistics)
    (case $statistics
@@ -259,7 +259,7 @@
    (case $state
      (((IC:SearchState (IC:Task $model $original $observation $guards $quantum) $queue $best $statistics $first)
        (if (and (binary:unsigned? $budget)
-                (and (binary:unsigned? $quantum) (> $quantum 0)))
+                (if (binary:unsigned? $quantum) (> $quantum 0) False))
          (if (and (fair-queue:valid? $queue) (ic-search:statistics? $statistics))
            (if (ic-search:guards-current? $guards)
              (if (ic-search:checked-best? $model $original $observation $best)

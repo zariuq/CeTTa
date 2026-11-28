@@ -108,10 +108,13 @@ for f in transform_rules flow_loops case_default_retire presentation_looks; do
 done
 # Soft keywords in both routes: a keyword is a name wherever the grammar
 # cannot take the keyword (the soft-keyword printings of the programs above,
-# and texts that use keywords as names).
+# and texts that use keywords as names, the first word of a text among them).
 printf 'f(x) = 1;\nall(f(x));\nread(f(x));\natom(edge(a, b));\nmatch &self { edge{$x, $y} => once($x) };\ntransform &self { edge{$x, $y}, `read`{$y} => take($x) };\nfor ($i of [all, once]) { println!($i) };\nof(1) = from;\nin(of(2));\ng(*or{a}, 1 - all(b));\n' > "$work/soft.cm"
 printf 'def f($x):\n    all(read($x))\n    once($x)\natom(edge(a, b))\nfor $i of [all, once]:\n    println!(take($i))\n    collect($i)\ng(*or{a}, 1 - all(b))\n' > "$work/soft.py"
-for t in cstyle:soft.cm cstyle:transform_rules.cstyle cstyle:case_default_retire.cstyle \
+printf 'all(f(x));\nf(x) = 1;\n' > "$work/soft_first.cm"
+printf 'all(read(x))\nonce(x)\n' > "$work/soft_first.py"
+for t in cstyle:soft.cm cstyle:soft_first.cm pystyle:soft_first.py \
+         cstyle:transform_rules.cstyle cstyle:case_default_retire.cstyle \
          cstyle:presentation_looks.cstyle pystyle:soft.py pystyle:transform_rules.pystyle \
          pystyle:case_default_retire.pystyle pystyle:presentation_looks.pystyle; do
   p=${t%%:*}; f=${t#*:}

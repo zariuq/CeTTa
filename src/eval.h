@@ -215,10 +215,10 @@ int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
-/* Whether HEAD is one of CeTTa's clean primary extensions, offered by some
- * profiles and not others; and whether the active PeTTa session offers such
- * a name (its profile does, or a library it imports enables it). */
-bool eval_builtin_symbol_is_clean_extension(SymbolId head) __attribute__((weak));
+/* Whether HEAD's name has a builtin policy, which lists the profiles that
+ * offer it; and whether the active PeTTa session offers such a name (its
+ * profile does, or a library it imports enables it). */
+bool eval_builtin_symbol_has_policy(SymbolId head) __attribute__((weak));
 bool eval_current_builtin_symbol_allowed(SymbolId head) __attribute__((weak));
 /* The native modules the active session has imported.  The names a PeTTa
  * session offers come from its profile, which does not change, and from

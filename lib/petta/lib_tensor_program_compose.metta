@@ -4,7 +4,7 @@
 !(import! &self (library lib_tensor_program))
 
 (= (tp-compose:reverse-at $values $index)
-   (if (and (binary:unsigned? $index) (< $index (size-atom $values)))
+   (if (if (binary:unsigned? $index) (< $index (size-atom $values)) False)
      (TP:Some (index-atom $values (- (- (size-atom $values) 1) $index))) TP:None))
 (= (tp-compose:select $values $indices)
    (if (== $indices ()) (TP:Some ())

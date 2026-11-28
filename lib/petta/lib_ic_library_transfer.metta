@@ -9,7 +9,7 @@
       ((Syntax:Expr ((Syntax:Variable $index))) (library-transfer:port-at $arity $role $index Delayed))
       ($not-a-port Ctx:None))))
 (= (library-transfer:port-at $arity $role $index $mode)
-   (if (and (binary:unsigned? $index) (< $index $arity))
+   (if (if (binary:unsigned? $index) (< $index $arity) False)
      (Ctx:Template (IC:Hole $role $index) ((Ctx:Demand $role $index $mode))) Ctx:None))
 (= (library-transfer:pattern $heads $literals $origin $arity $role (IC:Node $index $children))
    (case (ic-template:operator $heads $index)

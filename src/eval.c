@@ -7695,17 +7695,15 @@ static bool active_builtin_symbol_allowed(SymbolId head) {
         eval_builtin_policy_of_symbol(head));
 }
 
-/* Whether HEAD is one of CeTTa's clean primary extensions (the builtin
- * policy's class of CeTTa's own extensions: reify, transform,
- * with-space-snapshot ...), offered by some profiles and not others. */
-bool eval_builtin_symbol_is_clean_extension(SymbolId head) {
-    const CettaBuiltinPolicy *policy = eval_builtin_policy_of_symbol(head);
-    return policy && policy->builtin_classification &&
-           strcmp(policy->builtin_classification,
-                  "clean_primary_extension") == 0;
+/* Whether HEAD's name has a builtin policy (session.c): the profiles that
+ * offer it are listed there, whatever its class (CeTTa's own extensions
+ * such as reify and transform, HE's public builtins such as unify and
+ * capture, compatibility aliases). */
+bool eval_builtin_symbol_has_policy(SymbolId head) {
+    return eval_builtin_policy_of_symbol(head) != NULL;
 }
 
-/* Whether a PeTTa session offers HEAD, a clean primary extension: its
+/* Whether a PeTTa session offers HEAD, a name with a builtin policy: its
  * profile does, or a library it imports enables it.  Any other session
  * keeps the reading its handlers give the name. */
 bool eval_current_builtin_symbol_allowed(SymbolId head) {

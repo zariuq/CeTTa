@@ -209,7 +209,7 @@
 ; TEXT with the keyword that begins at byte AT written `quoted`, or pres:none
 ; when no keyword is a whole word there (the longest one).
 (= (pres:soft-keyword $name $text $at)
-   (let* (($after-name (and (> $at 0) (pres:name-char? (str:byte-slice $text (- $at 1) $at))))
+   (let* (($after-name (if (> $at 0) (pres:name-char? (str:byte-slice $text (- $at 1) $at)) False))
           ($rest (str:byte-slice $text $at (str:byte-length $text)))
           ($k (if (or $after-name (pres:joins-before? $text $at)) ""
                   (pres:longest-keyword $rest (pres:keywords-of $name) ""))))

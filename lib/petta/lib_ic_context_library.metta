@@ -14,7 +14,7 @@
        (((Ctx:Site $form $path $bound $term) (Ctx:ValueSite $form $path $bound $ports $term))))))
 (= (context-library:value-image? $ports $term)
    (case $term
-     (((Syntax:Variable $index) (and (binary:unsigned? $index) (< $index $ports)))
+     (((Syntax:Variable $index) (if (binary:unsigned? $index) (< $index $ports) False))
       ((Syntax:Literal $kind $bytes) (source-library:scalar-kind? $kind)) ($not-entered False))))
 (= (context-library:reserved? $name)
    (or (binary-schema:member? $name

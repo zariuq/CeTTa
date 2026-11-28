@@ -90,3 +90,6 @@ __pycache__/
 !/tests/petta/fixtures/static_import_library.pl
 /repos/*
 !/repos/test_metta_lib/
+# check-compiled-route-corpus runs the ECAN probes, whose package registration
+# git-imports metta-attention into repos/ beside them.
+/benchmarks/ecan/repos/

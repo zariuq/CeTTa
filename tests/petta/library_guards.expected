@@ -1,0 +1,61 @@
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+false
+true
+false
+true
+false
+false
+true
+false
+true
+false
+true
+Ctx:None
+(Ctx:Template (IC:Hole role 1) ((Ctx:Demand role 1 Delayed)))
+false
+false
+true
+false
+true
+false
+false
+IC:None
+(IC:Some (1))
+TP:None
+(TP:Some c)
+false
+false
+true
+false
+false
+true
+(IC:SearchRefused InvalidQuantum)
+(IC:ResumeRejected InvalidBudget)
+false
+true
+false
+true
+false
+true
+IC:None
+(Rule (Syntax:Expr ()) () 0)
+(RC:Unsupported unknown-component-index index)
+(RC:Unsupported unknown-component-index 5)
+(RC:Unsupported unknown-component-update index)
+(RC:Unsupported unknown-component-update 5)
+(RC:Unsupported unknown-component-index index)
+(RC:Unsupported unknown-component-index 5)

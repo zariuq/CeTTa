@@ -1,0 +1,14 @@
+(unify (f $V0) (f 1) $V0 no)
+(unify (f 1) (f 2) yes no)
+(unify &self (fact $V0) $V0 none)
+(capture 3)
+Expression
+(count-atoms &self)
+(unify (f $V0) (f 1) $V0 no)
+((capture 3))
+(unify (f $V0) (f 1) $V0 no)
+(capture 3)
+true
+1
+no
+(capture 3)

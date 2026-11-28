@@ -1637,7 +1637,9 @@ static const PettaIntrinsicNameIds *petta_intrinsic_name_ids(void) {
  * read it as the space object itself.  `add-reduct` is HE's: PeTTa defines it
  * only by lib_he's equation, which makes it callable once imported, so
  * without that library it heads data.  A name left off this list stays an
- * operation, so the host evaluates the expression it heads. */
+ * operation where the session offers it, so the host evaluates the
+ * expression it heads; a name whose builtin policy the session's profile
+ * does not offer is an unknown name there (petta_program_extension_offered). */
 static bool petta_program_builtin_names_data(SymbolId head) {
     return head == g_builtin_syms.self ||
            head == g_builtin_syms.add_reduct ||
@@ -1684,15 +1686,18 @@ static bool petta_program_builtin_names_data(SymbolId head) {
            head == g_builtin_syms.native_handle;
 }
 
-/* Whether HEAD, if one of CeTTa's clean primary extensions, is offered by
- * the session: which builtins are such extensions is read once a symbol. */
+/* Whether HEAD, if a name with a builtin policy, is offered by the session:
+ * which builtins have a policy is read once a symbol.  Plain PeTTa defines
+ * none of the names its profile is not offered (the reference registers no
+ * `unify`, `capture` or `reify`), so such a name heads data wherever it
+ * occurs, at a directive's root as nested (P-APP-1). */
 static _Atomic uint8_t *g_petta_extension_kind;
 static SymbolId g_petta_extension_limit;
 
 static __attribute__((noinline)) bool petta_program_extension_offered_read(
     SymbolId head);
 
-/* 0: not read yet; 1: no extension; 2: an extension. */
+/* 0: not read yet; 1: no builtin policy; 2: a builtin policy. */
 static inline bool petta_program_extension_offered(SymbolId head) {
     _Atomic uint8_t *kinds = atomic_load_explicit(
         (_Atomic(_Atomic uint8_t *) *)&g_petta_extension_kind,
@@ -1705,7 +1710,7 @@ static inline bool petta_program_extension_offered(SymbolId head) {
 
 static __attribute__((noinline)) bool petta_program_extension_offered_read(
     SymbolId head) {
-    if (!symbol_id_is_builtin(head) || !eval_builtin_symbol_is_clean_extension ||
+    if (!symbol_id_is_builtin(head) || !eval_builtin_symbol_has_policy ||
         !eval_current_builtin_symbol_allowed)
         return true;
     _Atomic uint8_t *kinds = atomic_load_explicit(
@@ -1737,7 +1742,7 @@ static __attribute__((noinline)) bool petta_program_extension_offered_read(
         return true;
     uint8_t kind = atomic_load_explicit(&kinds[head], memory_order_relaxed);
     if (kind == 0u) {
-        kind = eval_builtin_symbol_is_clean_extension(head) ? 2u : 1u;
+        kind = eval_builtin_symbol_has_policy(head) ? 2u : 1u;
         atomic_store_explicit(&kinds[head], kind, memory_order_relaxed);
     }
     return kind == 1u || eval_current_builtin_symbol_allowed(head);
@@ -2779,9 +2784,9 @@ static PettaPlanNode *petta_plan_build_in(
              * every registered name: a call at one of its arities, and
              * otherwise a partial application or an over-application,
              * which dispatch decides (RegisteredArity.reference). */
-            /* A clean primary extension the session does not offer is an
-             * unknown name there (plain PeTTa has no `reify`): its call is
-             * data whose arguments are evaluated. */
+            /* A builtin whose policy the session does not offer is an
+             * unknown name there (plain PeTTa has no `reify`, `unify` or
+             * `capture`): its call is data whose arguments are evaluated. */
             node->extension_offered =
                 petta_program_head_applies_at_any_arity(head);
             node->role = constructor_slot_frame

@@ -81,10 +81,10 @@
                (let* (($bound (source-context:variables (Syntax:Expr $arguments)))
                       ($ports (foldl-atom $bound 0 $count $index (max $count (+ $index 1)))))
                  (if (and (not (syntax:intrinsic-head? (binary:from-symbol-utf8 $bytes)))
-                       (and (source-library:plain-names? $names)
+                       (if (source-library:plain-names? $names)
                          (and (<= $ports (size-atom $names))
                            (foldl-atom $arguments True $valid $arg
-                             (and $valid (rule-heads:pattern? $constructors $arg))))))
+                             (and $valid (rule-heads:pattern? $constructors $arg)))) False))
                    (IC:Some (Ctx:Rule $head $body $bound $ports)) IC:None)))
               ($other IC:None)))) IC:None))
       ($other IC:None))))

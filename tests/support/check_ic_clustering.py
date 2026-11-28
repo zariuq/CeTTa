@@ -218,13 +218,18 @@ def main():
                  ($closed (ic:release $state))) $result))))))''', ["IC:ResumeRejected", "ChangedDependencies"])
     for bad_region in ('(TP:ClusterRegion (0) (0) 1)', '(TP:ClusterRegion (129) (0) 1)',
                        '(TP:ClusterRegion (2) (128) 1)', '(TP:ClusterRegion (2) (0) -1)',
-                       '(TP:ClusterRegion Wrong (0) 1)', '(TP:ClusterRegion (2) (0) 1.0)'):
+                       '(TP:ClusterRegion Wrong (0) 1)', '(TP:ClusterRegion (2) (0) 1.0)',
+                       '(TP:ClusterRegion (Two) (0) 1)', '(TP:ClusterRegion (2) (Zero) 1)'):
         add(f'(let* {bound} (ic:prepare-fit Numeric:Clusters $original {bad_region} ()))',
             ["IC:FitRefused", "ClusterRegion"])
     add(f'(let* {bound} (ic:prepare-fit Numeric:Clusters $original {region} NotSources))',
         ["IC:FitRefused", "ClusterSources"])
     empty = archive([], array((0, 2), []), array((0, 2), [], 'BoolTensor'), 0.0)
     add(f'(ic:prepare-fit Numeric:Clusters {byte_tensor(empty)} (TP:ClusterRegion () () 1) ())',
+        ["IC:FitRefused", "ClusterTask"])
+    # A scalar is no matrix: its shape has no row count to read.
+    scalar = archive([], array((), [1.0]), array((), [True], 'BoolTensor'), 0.0)
+    add(f'(ic:prepare-fit Numeric:Clusters {byte_tensor(scalar)} (TP:ClusterRegion (2) (0) 1) ())',
         ["IC:FitRefused", "ClusterTask"])
     add(f'(let* {bound} (ic:predict Numeric:Clusters $original (tensor:from-values f64 (1 2) (0.0 0.0))))',
         ["IC:NumericFault", "NoModel"])
@@ -238,7 +243,13 @@ def main():
                f'(TP:ClusterUpdate 3 {centers} {labels} 0 0 ())',
                f'(TP:ClusterUpdate 0 {centers} {labels} 0 2 ())',
                f'(TP:ClusterUpdate 0 {centers} {labels} 1 0 (0.0))',
-               f'(TP:ClusterUpdate 0 {centers} (tensor:from-values i64 (1) (0)) 0 0 ())']
+               f'(TP:ClusterUpdate 0 {centers} (tensor:from-values i64 (1) (0)) 0 0 ())',
+               # A field that is no natural number is refused, not compared.
+               f'(TP:ClusterScan Fit 2 Zero {centers} () 0 () TP:None)',
+               f'(TP:ClusterScan Fit 2 0 {centers} () Zero () TP:None)',
+               f'(TP:ClusterScan Seed 2 0 {centers} (Zero 1) 1 () TP:None)',
+               f'(TP:ClusterScan Seed 2 0 {centers} (0 1) 1 () (TP:Farthest Zero 0.0))',
+               f'(TP:ClusterUpdate Zero {centers} {labels} 0 0 ())']
     for proposal in invalid:
         add(f'(let* {bound} (ic-search:materialize (TP:ClusterModel {region}) $original {proposal}))',
             ["IC:ProducerFault", "ClusterCursor"])

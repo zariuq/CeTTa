@@ -6,12 +6,6 @@
   (signature)
   (equations)
   (rewrites
-    (rule mm-proof-relational-layer
-      (head
-        (source-proof-sequence-relational-layer
-          MetamathProofV1 MetamathLanguageV1))
-      (body))
-
     (rule mm-proof-relational-table-symbol-kind
       (head
         (source-proof-sequence-relational-table-role

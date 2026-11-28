@@ -4,7 +4,8 @@
 # pass: the database is accepted; fail: it is refused, as the metamath-test
 # suite writes verdicts.  test-metamath-cogslt-langdef-v1 checks every line
 # on the authority and generated-relational-audit-v1 backends.
-# test-metamath-cogslt-generated-form-mutations-v1 checks every line on
+# test-metamath-cogslt-generated-form-mutations-v1 and
+# test-metamath-cogslt-every-rule-mutations-v1 check every line on
 # generated-relational-audit-v1 for each mutant the MeTTa witness leaves
 # unchanged: that backend reads the ordered frame and ordered $d of each
 # assertion, which the authority backend does not read.

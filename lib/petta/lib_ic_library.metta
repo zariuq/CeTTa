@@ -349,7 +349,7 @@
    (if (== $arguments ()) True
      (and
        (case (car-atom $arguments)
-         (((Syntax:Variable $index) (and (binary:unsigned? $index) (< $index $ports)))
+         (((Syntax:Variable $index) (if (binary:unsigned? $index) (< $index $ports) False))
           ((Syntax:Literal $kind $bytes) (source-library:scalar-kind? $kind)) ($other False)))
        (source-library:call-arguments? $ports (cdr-atom $arguments)))))
 

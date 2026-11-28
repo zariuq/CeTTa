@@ -158,10 +158,10 @@
      (if (== $pairs ()) True
        (case (car-atom $pairs)
          ((($left $right)
-           (and (binary:unsigned? $left)
-             (and (binary:unsigned? $right)
+           (if (binary:unsigned? $left)
+             (if (binary:unsigned? $right)
                (and (< $left $count)
-                 (and (< $right $count) (library-stack:seeds? (cdr-atom $pairs) $count))))))
+                 (and (< $right $count) (library-stack:seeds? (cdr-atom $pairs) $count))) False) False))
           ($invalid-pair False)))) False))
 (= (library-stack:region? $region $count)
    (case $region

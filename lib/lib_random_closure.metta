@@ -1052,7 +1052,7 @@
        (let ($first $rest) (decons-atom $updates)
          (case $first
            ((($idx $new-state)
-             (if (or (not (rc:is-int $idx)) (or (< $idx 0) (>= $idx $n-comps)))
+             (if (if (rc:is-int $idx) (or (< $idx 0) (>= $idx $n-comps)) True)
                  (RC:Unsupported unknown-component-update $idx)
                  (let* ((($cc $old-ws) (rc:slot-get $stree $idx))
                         ((RC:CompiledComponent $name $nc $prof $fm $er) $cc)
@@ -1161,7 +1161,7 @@
      (let (RC:Engine $prepared $stree $sh-state $fvalid $ftree $etree $edirty $lastv $fb) $engine
        (let (RC:Prepared $prog $width $fams $nidx $scases $cols $pqs $ccomps) $prepared
          (let $n-comps (rc:slot-count $stree)
-           (if (or (not (rc:is-int $idx)) (or (< $idx 0) (>= $idx $n-comps)))
+           (if (if (rc:is-int $idx) (or (< $idx 0) (>= $idx $n-comps)) True)
                (RC:Unsupported unknown-component-index $idx)
                (let (RC:Program $boundary $shared $raw-comps) $prog
                  (let $vchk (rc:validate-component-against-peers $boundary $shared $raw-comps $idx $new-component)

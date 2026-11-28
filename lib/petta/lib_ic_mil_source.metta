@@ -84,14 +84,14 @@
 ; This is deliberately smaller than the general source language.
 (= (mil-source:term? $operations $constructors $arity $term)
    (case $term
-     (((Syntax:Variable $index) (and (binary:unsigned? $index) (< $index $arity)))
+     (((Syntax:Variable $index) (if (binary:unsigned? $index) (< $index $arity) False))
       ((Syntax:Literal Symbol $bytes)
        (or (== $bytes (binary:utf8 "true"))
          (or (== $bytes (binary:utf8 "false"))
            (binary-schema:member? ((binary:from-utf8 $bytes) 0) $constructors))))
       ((Syntax:Literal $kind $bytes) (source-library:scalar-kind? $kind))
       ((Syntax:Expr ((Syntax:Variable $index)))
-       (and (binary:unsigned? $index) (< $index $arity)))
+       (if (binary:unsigned? $index) (< $index $arity) False))
       ((Syntax:Expr ()) True)
       ($other
        (case (source-context:call $term)

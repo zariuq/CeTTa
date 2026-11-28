@@ -160,8 +160,8 @@
    (case $arguments
      (((Wire:Atom 0) (IC:Some ()))
       ((Wire:Pair (Wire:Pair (Wire:Atom 0) (Wire:Atom $index)) $tail)
-       (if (and (binary:unsigned? $index)
-                (and (< $index (size-atom $bound)) (not (binary-schema:member? $index $seen))))
+       (if (if (binary:unsigned? $index)
+                (and (< $index (size-atom $bound)) (not (binary-schema:member? $index $seen))) False)
          (let $next (cons-atom $index $seen)
            (case (scoped:spine $bound $tail $next)
              (((IC:Some $rest) (let $values (cons-atom $index $rest) (IC:Some $values)))

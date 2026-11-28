@@ -9,11 +9,11 @@
 (= (source-scope:fresh? $bound $count $value)
    (case $value
      (((Syntax:Variable $index)
-       (and (binary:unsigned? $index)
-         (and (< $index $count) (not (binary-schema:member? $index $bound))))) ($other False))))
+       (if (binary:unsigned? $index)
+         (and (< $index $count) (not (binary-schema:member? $index $bound))) False)) ($other False))))
 (= (source-scope:valid? $operations $parameters $count $term)
-   (if (and (binary:unsigned? $parameters)
-            (and (binary:unsigned? $count) (<= $parameters $count)))
+   (if (if (binary:unsigned? $parameters)
+            (if (binary:unsigned? $count) (<= $parameters $count) False) False)
      (source-scope:term? $operations (source-scope:indices $parameters 0) $count $term False) False))
 
 (= (source-scope:term? $operations $bound $count $term $quoted)

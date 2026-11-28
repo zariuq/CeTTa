@@ -420,8 +420,8 @@
      (let (Ledger:BoundEngine (Ledger:State $prep $cat $obs-cat $active) $eng) $bound
        (let (RC:Prepared $prog $w $fams $ni $sc $cols $pqs $ccomps) $prep
          (let (RC:Program $boundary $shared $raw-comps) $prog
-           (if (or (not (rc:is-int $comp-idx))
-                   (or (< $comp-idx 0) (>= $comp-idx (size-atom $raw-comps))))
+           (if (if (rc:is-int $comp-idx)
+                   (or (< $comp-idx 0) (>= $comp-idx (size-atom $raw-comps))) True)
                (RC:Unsupported unknown-component-index $comp-idx)
                (let (RC:Component $old-name $old-ch $old-priv $old-rl) (index-atom $raw-comps $comp-idx)
                  (case $new-comp
